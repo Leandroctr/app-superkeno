@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { OneSignalInitializer } from "@/components/onesignal-initializer";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { appConfig } from "@/lib/app-config";
 
@@ -33,7 +32,6 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body>
         <ServiceWorkerRegister />
-        <OneSignalInitializer />
         {children}
       </body>
     </html>

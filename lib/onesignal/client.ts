@@ -1,6 +1,6 @@
 "use client";
 
-import { appConfig } from "@/lib/app-config";
+import { appConfigClient } from "@/lib/app-config.client";
 
 type OneSignalInstance = {
   init: (options: { appId: string; serviceWorkerPath?: string }) => Promise<void>;
@@ -85,7 +85,11 @@ async function sendSubscription(oneSignal: OneSignalInstance, permissionStatus: 
 }
 
 export async function initializeOneSignal(): Promise<OneSignalInitResult> {
-  if (!appConfig.oneSignalAppId) {
+  debugLog("Config publica carregada.", {
+    hasOneSignalAppId: Boolean(appConfigClient.oneSignalAppId),
+  });
+
+  if (!appConfigClient.oneSignalAppId) {
     debugLog("NEXT_PUBLIC_ONESIGNAL_APP_ID vazio; push desativado.");
     return {
       enabled: false,
@@ -111,7 +115,7 @@ export async function initializeOneSignal(): Promise<OneSignalInitResult> {
       window.OneSignalDeferred.push(async (oneSignal) => {
         try {
           await oneSignal.init({
-            appId: appConfig.oneSignalAppId,
+            appId: appConfigClient.oneSignalAppId,
             serviceWorkerPath: "/sw.js",
           });
           debugLog("SDK inicializado.");

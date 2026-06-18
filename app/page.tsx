@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { NotificationButton } from "@/components/notification-button";
 import { appConfig } from "@/lib/app-config";
 
 export default function Home() {
@@ -84,6 +85,7 @@ export default function Home() {
             >
               {appConfig.home.supportActionLabel}
             </a>
+            <NotificationButton themeColor={appConfig.themeColor} />
           </div>
         </div>
 
