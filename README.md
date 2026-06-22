@@ -12,7 +12,7 @@ sites e plataformas.
 - ESLint
 - Supabase
 - OneSignal Web Push
-- PWA com manifest dinamico e service worker
+- PWA launcher com splash, manifest dinamico e service worker
 
 ## Como executar
 
@@ -37,7 +37,7 @@ Implementado:
 
 - Projeto Next.js com TypeScript, App Router, Tailwind CSS e ESLint.
 - Arquitetura white-label/multi-site centralizada em `lib/app-config.ts`.
-- Home mobile-first consumindo configuracoes por variaveis de ambiente.
+- Splash launcher mobile-first consumindo configuracoes por variaveis de ambiente.
 - Manifest dinamico em `app/manifest.ts`.
 - Service worker em `public/sw.js`.
 - Integracao inicial Supabase client/server.
@@ -96,13 +96,30 @@ A configuracao principal fica em `lib/app-config.ts`. Para criar uma nova
 variacao do PWA, use a mesma base de codigo e altere apenas as variaveis de
 ambiente do deploy.
 
+## Fluxo publico do PWA
+
+O front publico funciona como launcher/splash app:
+
+1. O usuario abre o PWA pela tela inicial instalada ou pelo dominio publico.
+2. A tela de splash exibe logo, nome da marca e a mensagem
+   `Carregando ambiente seguro...`.
+3. Depois de 1500ms, o PWA redireciona automaticamente para
+   `NEXT_PUBLIC_PLATFORM_URL`.
+4. O botao pequeno `Abrir agora` fica disponivel como fallback caso o navegador
+   bloqueie ou atrase o redirecionamento.
+5. Se `NEXT_PUBLIC_PLATFORM_URL` estiver vazia ou configurada como `#`, o
+   redirecionamento nao acontece e a tela mostra uma mensagem amigavel de
+   configuracao pendente.
+6. O link de suporte usa `NEXT_PUBLIC_SUPPORT_URL`; notificacoes ficam como
+   opcao secundaria discreta na propria tela.
+
 Variaveis que normalmente mudam por dominio/site:
 
 - `NEXT_PUBLIC_APP_NAME`: nome completo exibido no app.
 - `NEXT_PUBLIC_APP_SHORT_NAME`: nome curto usado no manifest e UI compacta.
-- `NEXT_PUBLIC_APP_DESCRIPTION`: texto principal da home e descricao do PWA.
-- `NEXT_PUBLIC_PLATFORM_URL`: destino do botao Acessar.
-- `NEXT_PUBLIC_SUPPORT_URL`: destino dos botoes de suporte.
+- `NEXT_PUBLIC_APP_DESCRIPTION`: descricao do PWA.
+- `NEXT_PUBLIC_PLATFORM_URL`: destino automatico do splash launcher.
+- `NEXT_PUBLIC_SUPPORT_URL`: destino do link de suporte.
 - `NEXT_PUBLIC_PUBLIC_URL`: dominio publico do PWA.
 - `NEXT_PUBLIC_LOGO_URL`: URL publica do logo da marca.
 - `NEXT_PUBLIC_THEME_COLOR`: cor principal da marca.
@@ -110,12 +127,16 @@ Variaveis que normalmente mudam por dominio/site:
 - `NEXT_PUBLIC_SUPABASE_URL`: projeto Supabase da variacao.
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`: chave anonima Supabase da variacao.
 - `NEXT_PUBLIC_ONESIGNAL_APP_ID`: app OneSignal da variacao.
-- `NEXT_PUBLIC_HOME_EYEBROW`: texto pequeno no topo da home.
-- `NEXT_PUBLIC_HOME_PRIMARY_ACTION`: texto do botao principal.
-- `NEXT_PUBLIC_HOME_SUPPORT_ACTION`: texto do botao de suporte.
-- `NEXT_PUBLIC_HOME_FLOATING_SUPPORT`: texto do botao flutuante.
+- `NEXT_PUBLIC_HOME_EYEBROW`: legado do layout anterior, mantido para
+  compatibilidade.
+- `NEXT_PUBLIC_HOME_PRIMARY_ACTION`: legado do layout anterior, mantido para
+  compatibilidade.
+- `NEXT_PUBLIC_HOME_SUPPORT_ACTION`: legado do layout anterior, mantido para
+  compatibilidade.
+- `NEXT_PUBLIC_HOME_FLOATING_SUPPORT`: legado do layout anterior, mantido para
+  compatibilidade.
 
-O manifest, a home, o painel e as integracoes publicas consomem
+O manifest, o splash launcher, o painel e as integracoes publicas consomem
 `lib/app-config.ts`, entao nome, descricao, cores, logo e URLs acompanham
 automaticamente o ambiente configurado.
 
@@ -146,7 +167,7 @@ O envio real passa por `/api/push/send`.
 
 1. Preencha `.env.local` com Supabase, OneSignal e credenciais admin.
 2. Rode `npm run dev`.
-3. Abra a home e aceite a permissao de notificacao do navegador.
+3. Abra o PWA e, se necessario, expanda a opcao discreta de notificacoes.
 4. Confirme no Supabase se uma linha entrou em `push_subscriptions`.
 5. Acesse `/admin/login`.
 6. Entre com `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
