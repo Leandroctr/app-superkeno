@@ -12,16 +12,18 @@ function isValidPlatformUrl(url: string) {
 }
 
 function prepareHtml(html: string): string {
-  const hasViewport = /name=["']viewport["']/i.test(html);
-  const viewportTag = hasViewport
-    ? ""
-    : '<meta name="viewport" content="width=device-width, initial-scale=1">\n';
-  const resetTag =
-    '<style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden}</style>\n';
-  const inject = viewportTag + resetTag;
+  const W = 1080;
+  const H = 1920;
+
+  const inject = `<meta name="viewport" content="width=${W}">
+<style>
+html{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden;}
+body{margin:0;padding:0;width:${W}px;height:${H}px;overflow:hidden;transform-origin:top left;opacity:0;}
+</style>
+<script>(function(){function s(){var f=Math.min(window.innerWidth/${W},window.innerHeight/${H});document.body.style.transform='scale('+f+')';document.body.style.opacity='1';}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',s);}else{s();}window.addEventListener('resize',s);})()</script>`;
 
   if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, `<head$1>\n${inject}`);
+    return html.replace(/<head([^>]*)>/i, (_, attrs: string) => `<head${attrs}>\n${inject}`);
   }
   return `<head>\n${inject}</head>\n${html}`;
 }
