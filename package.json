@@ -12,7 +12,8 @@
     "@supabase/supabase-js": "latest",
     "next": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "react-onesignal": "^3.5.6"
   },
   "devDependencies": {
     "@eslint/eslintrc": "latest",
