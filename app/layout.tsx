@@ -57,8 +57,11 @@ export default async function RootLayout({
         />
       </head>
       <body>
-        <Script id="onesignal-deferred-setup" strategy="beforeInteractive">
-          {`window.OneSignalDeferred = window.OneSignalDeferred || [];`}
+        <Script id="onesignal-init" strategy="beforeInteractive">
+          {`window.OneSignalDeferred = window.OneSignalDeferred || [];
+            window.OneSignalDeferred.push(async function(OneSignal) {
+              await OneSignal.init({ appId: "${process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID}" });
+            });`}
         </Script>
         <Script
           src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js"

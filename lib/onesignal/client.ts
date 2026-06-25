@@ -111,12 +111,7 @@ async function _initializeOneSignal(
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       window.OneSignalDeferred.push(async (oneSignal) => {
         try {
-          debugLog("Antes de oneSignal.init.");
-          await oneSignal.init({
-            appId: oneSignalAppId,
-          });
-          debugLog("Depois de oneSignal.init.");
-          debugLog("SDK inicializado.");
+          debugLog("SDK inicializado, solicitando permissao.");
           debugLog("Notification.permission atual.", Notification.permission);
 
           const permissionGranted =
