@@ -1,9 +1,10 @@
 import "server-only";
 
+import { cache } from "react";
 import { getFallbackAppSettings, settingsRowToAppSettings } from "@/lib/app-settings";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
-export async function getAppSettings() {
+export const getAppSettings = cache(async function getAppSettings() {
   const supabase = createSupabaseAdminClient();
 
   if (!supabase) {
@@ -22,4 +23,4 @@ export async function getAppSettings() {
   }
 
   return settingsRowToAppSettings(data);
-}
+});

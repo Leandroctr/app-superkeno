@@ -14,7 +14,10 @@ export async function generateMetadata(): Promise<Metadata> {
     metadataBase: settings.publicUrl ? new URL(settings.publicUrl) : undefined,
     icons: {
       icon: settings.faviconUrl || settings.icon192Url || "/icons/icon-192.svg",
-      apple: settings.icon192Url || "/icons/icon-192.svg",
+      apple: {
+        url: settings.icon192Url || "/icons/icon-192.svg",
+        sizes: "180x180",
+      },
     },
     appleWebApp: {
       capable: true,
@@ -35,13 +38,22 @@ export async function generateViewport(): Promise<Viewport> {
   };
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const settings = await getAppSettings();
+
   return (
     <html lang="pt-BR">
+      <head>
+        <link
+          rel="apple-touch-icon"
+          sizes="180x180"
+          href={settings.icon192Url || "/icons/icon-192.svg"}
+        />
+      </head>
       <body>
         <ServiceWorkerRegister />
         {children}
