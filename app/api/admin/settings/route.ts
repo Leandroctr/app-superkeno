@@ -93,7 +93,7 @@ export async function POST(request: Request) {
   const settings = normalizePayload(payload);
   const row = appSettingsToRow(settings);
   const query = settings.id
-    ? supabase.from("app_settings").update(row).eq("id", settings.id)
+    ? supabase.from("app_settings").update(row).eq("tenant_domain", hostname)
     : supabase
         .from("app_settings")
         .upsert({ ...row, tenant_domain: hostname }, { onConflict: "tenant_domain" });
