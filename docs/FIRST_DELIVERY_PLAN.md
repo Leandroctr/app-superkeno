@@ -543,7 +543,23 @@ Os itens abaixo **não podem ser iniciados sem aprovação explícita**, mesmo q
 
 ---
 
-## 11. Próximo Documento Planejado
+## 11. Implementações Realizadas Fora do Lote Original
+
+### Otimização de imagens no upload (2026-06-29)
+
+Implementado fora do escopo original do primeiro lote, por solicitação específica.
+
+**Arquivo alterado:** `app/api/admin/upload/route.ts`
+**Dependência adicionada:** `sharp`
+**Documentação:** `docs/IMAGE_UPLOAD_OPTIMIZATION.md`
+
+Kinds com otimização ativa: `icon512`, `icon192`, `favicon`, `logo`.
+SVG, ICO, `splash` e `splashHtml` passam sem otimização.
+Resposta JSON inclui `originalSizeKb`, `optimizedSizeKb`, `optimized`, `width`, `height`.
+
+---
+
+## 12. Próximo Documento Planejado
 
 Após a conclusão e aprovação deste primeiro lote, o próximo passo de documentação será a criação de:
 
