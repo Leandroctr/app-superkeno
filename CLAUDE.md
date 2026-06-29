@@ -9,12 +9,13 @@ Este arquivo define regras obrigatórias para qualquer agente de IA que trabalhe
 Sempre ler, nesta ordem:
 
 1. `docs/AUDIT_REPORT.md`
-2. `docs/PRODUCTION_SAFETY_PLAN.md`
-3. `docs/FIRST_DELIVERY_PLAN.md`
-4. `docs/LOGGING_PLAN.md`
-5. `docs/PWA_INSTALL_EXPERIENCE.md`
-6. `docs/ONBOARDING_CLIENTE.md`
-7. `docs/ROADMAP.md` (quando existir)
+2. `docs/TENANT_DOMAIN_AUDIT.md`
+3. `docs/PRODUCTION_SAFETY_PLAN.md`
+4. `docs/FIRST_DELIVERY_PLAN.md`
+5. `docs/LOGGING_PLAN.md`
+6. `docs/PWA_INSTALL_EXPERIENCE.md`
+7. `docs/ONBOARDING_CLIENTE.md`
+8. `docs/ROADMAP.md` (quando existir)
 
 Se algum documento estiver ausente, continuar normalmente.
 
@@ -75,11 +76,15 @@ Uma implementação não é considerada concluída enquanto a documentação nã
 
 ## Arquitetura atual
 
-O projeto opera atualmente como:
+O projeto está em **transição arquitetural**.
 
-> **White label por deploy individual.**
+> **Antes:** White label por deploy individual — settings identificados por `singleton_key`.
 
-Não assumir multi-tenant por `tenant_domain`. Não existe essa coluna nem essa lógica no projeto.
+> **Agora (código):** Multi-tenant por domínio — settings identificados por `tenant_domain`.
+
+> **Bloqueio crítico:** a coluna `tenant_domain` não existe em `supabase/schema.sql`. O código já usa `tenant_domain`, mas o banco não tem a coluna nem o índice único necessário. Resultado: settings sempre em fallback de env vars; painel admin não consegue salvar configurações.
+
+Antes de qualquer desenvolvimento, ler: `docs/TENANT_DOMAIN_AUDIT.md`.
 
 ---
 

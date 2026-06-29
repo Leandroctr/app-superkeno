@@ -3,7 +3,7 @@
 **Projeto:** app-big-pwa  
 **Data:** 2026-06-28  
 **Tipo:** Planejamento — nenhuma implementação neste arquivo.  
-**Base:** AUDIT_REPORT.md, LOGGING_PLAN.md, PWA_INSTALL_EXPERIENCE.md, PRODUCTION_SAFETY_PLAN.md, ONBOARDING_CLIENTE.md
+**Base:** AUDIT_REPORT.md, TENANT_DOMAIN_AUDIT.md, LOGGING_PLAN.md, PWA_INSTALL_EXPERIENCE.md, PRODUCTION_SAFETY_PLAN.md, ONBOARDING_CLIENTE.md
 
 ---
 
@@ -17,7 +17,9 @@ O primeiro lote de entrega tem três objetivos complementares:
 
 3. **Push notification confiável** — a estrutura de push existe, mas há pontos cegos: App ID dividido entre banco e variável de ambiente, SW duplicado sem limpeza, parse silencioso da resposta OneSignal. Não será reescrito — será estabilizado.
 
-Este lote **não inclui** multi-tenant, Chat Digital, Welcome Chat, automações ou qualquer migração estrutural de banco.
+Este lote **não inclui** Chat Digital, Welcome Chat, automações ou reconstrução estrutural do banco.
+
+**Atenção — bloqueio identificado após auditoria:** antes de iniciar a Etapa 1 (logger), é obrigatório resolver a migration de `tenant_domain`. Ver `docs/TENANT_DOMAIN_AUDIT.md` e Etapa 0 abaixo.
 
 ---
 
@@ -59,7 +61,7 @@ Os itens abaixo estão **fora deste lote** e não devem ser tocados:
 
 | Área                        | Motivo da exclusão                                          |
 |-----------------------------|-------------------------------------------------------------|
-| Multi-tenant / tenant_domain | Não existe hoje; requer planejamento separado              |
+| Multi-tenant completo        | O código já usa `tenant_domain`; o bloqueio atual é de schema, não de planejamento. Ver Etapa 0 e `docs/TENANT_DOMAIN_AUDIT.md` |
 | Chat Digital                | Fora do escopo do produto PWA white label                  |
 | Welcome Chat                | Idem                                                        |
 | Automações                  | Idem                                                        |
@@ -195,6 +197,41 @@ Apenas os arquivos abaixo devem ser tocados. Nenhum outro.
 ## 6. Plano de Implementação em Etapas Pequenas
 
 Cada etapa é independente e pode ser revisada antes da próxima.
+
+### Etapa 0 — Resolver tenant_domain (BLOQUEANTE)
+
+**Prioridade:** esta etapa deve ser concluída e aprovada antes de qualquer outra.
+
+**Problema:** o código usa `.eq("tenant_domain", hostname)` e `.upsert({ onConflict: "tenant_domain" })`, mas a coluna `tenant_domain` não existe em `supabase/schema.sql`. Resultado: settings sempre em fallback; painel admin não consegue salvar.
+
+**Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
+**Arquivo de rollback:** `supabase/migrations/002_add_tenant_domain_to_app_settings.rollback.sql`
+
+**Pré-requisitos obrigatórios antes de executar:**
+
+1. Fazer backup completo do banco Supabase.
+2. Identificar o hostname exato: `new URL(NEXT_PUBLIC_PUBLIC_URL).hostname` no painel Vercel.
+3. Abrir `002_add_tenant_domain_to_app_settings.sql`, descomentar o bloco UPDATE e substituir `SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE` pelo hostname real.
+4. Executar no Supabase Studio (SQL Editor).
+
+**O que a migration faz:**
+- Adiciona coluna `tenant_domain text` em `app_settings` (idempotente).
+- Cria índice único em `tenant_domain` (compatível com `ON CONFLICT (tenant_domain)`).
+- Preenche a linha existente com o hostname do deploy (bloco UPDATE manual).
+- Preserva `singleton_key` e todos os dados existentes.
+
+**Critérios de conclusão desta etapa:**
+
+- [ ] `supabase/migrations/002_add_tenant_domain_to_app_settings.sql` executado no banco
+- [ ] Linha existente atualizada com hostname correto
+- [ ] `GET /api/settings` retorna `source: database` (não `source: env`)
+- [ ] Painel admin consegue salvar configurações sem erro 500
+
+**Rollback:** executar `supabase/migrations/002_add_tenant_domain_to_app_settings.rollback.sql`. Remove índice e coluna. O sistema volta ao estado de falha silenciosa anterior.
+
+**Referência completa:** `docs/TENANT_DOMAIN_AUDIT.md` — seção 8.
+
+---
 
 ### Etapa 1 — Logger básico do servidor
 
@@ -336,6 +373,7 @@ lib/install/
 ## 7. Ordem Recomendada de Execução
 
 ```
+0.  supabase/schema.sql + banco                       ← BLOQUEANTE: migration tenant_domain (ver Etapa 0)
 1.  lib/logger/ (types, server, client, index)        ← logger modular do servidor e cliente
 2.  lib/app-settings.server.ts                        ← log de fallback settings
     app/api/settings/route.ts                         ← log de source: database|env
@@ -519,6 +557,13 @@ O `ROADMAP.md` **não será criado agora** — apenas após entrega e validaçã
 ## 12. Critérios de Sucesso
 
 O primeiro lote estará concluído quando todos os critérios abaixo forem verificados:
+
+### tenant_domain (Etapa 0 — pré-requisito de tudo)
+
+- [ ] `supabase/schema.sql` contém coluna `tenant_domain text` e índice único
+- [ ] Migration executada no banco Supabase
+- [ ] `GET /api/settings` retorna `source: database` (não `source: env`)
+- [ ] Painel admin consegue salvar configurações sem erro 500
 
 ### Logs
 

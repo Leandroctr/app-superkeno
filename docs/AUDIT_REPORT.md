@@ -11,15 +11,17 @@
 
 ## 1. Resumo Executivo
 
-O projeto está funcional, mas a arquitetura atual ainda não é multi-tenant real por domínio.
+O projeto está em **transição arquitetural** com um bloqueio crítico em produção.
 
-Hoje o modelo correto deve ser descrito como:
+O código foi atualizado para operar como multi-tenant por domínio (`tenant_domain`), mas o banco de dados ainda não acompanhou. Isso cria um estado de falha silenciosa em produção.
 
-> **White label por deploy individual.**
+> **Modelo anterior:** White label por deploy individual — settings identificados por `singleton_key boolean unique`.
 
-Cada cliente possui seu próprio deploy, suas próprias variáveis de ambiente e seu próprio App ID do OneSignal. O banco contém uma configuração singleton por aplicação/deploy, não uma estrutura multi-tenant com isolamento por `tenant_domain`.
+> **Modelo atual (código):** Multi-tenant por domínio — settings identificados por `tenant_domain`.
 
-Isso não é necessariamente ruim para a fase atual. Pelo contrário: é mais seguro manter essa abordagem enquanto o projeto ainda está em produção e sensível a mudanças em Service Worker, OneSignal, manifest e push notifications.
+> **Gap crítico:** a coluna `tenant_domain` não existe em `supabase/schema.sql`. Leitura sempre retorna fallback de env vars. Escrita falha com erro Postgres.
+
+Para a auditoria completa da implementação e ações necessárias, ler: `docs/TENANT_DOMAIN_AUDIT.md`.
 
 ---
 
@@ -37,23 +39,31 @@ Isso não é necessariamente ruim para a fase atual. Pelo contrário: é mais se
 
 ## 3. Diagnóstico Principal
 
-### Situação esperada anteriormente
+### Situação anterior (pré-merge)
 
-A documentação anterior sugeria uma arquitetura multi-tenant usando `tenant_domain`.
+O projeto operava como white label por deploy individual. Settings identificados por `singleton_key boolean unique`. A documentação original afirmava que `tenant_domain` não existia.
 
-### Situação real encontrada
+### Situação atual (pós-merge de 2026-06-28)
 
-O snapshot mostra que:
+Após o merge de 5 commits remotos, o código foi atualizado para:
 
-- não existe coluna `tenant_domain`;
-- não existe lógica por domínio;
-- `app_settings` usa `singleton_key`;
-- `getAppSettings()` busca o registro mais recente/singleton;
-- o projeto opera como single-tenant por deploy.
+- filtrar `app_settings` por `.eq("tenant_domain", hostname)`;
+- salvar settings com `.upsert({ onConflict: "tenant_domain" })`;
+- derivar o hostname de `NEXT_PUBLIC_PUBLIC_URL` via `extractHostname()`.
+
+Porém, `supabase/schema.sql` **não foi atualizado**. A coluna `tenant_domain` não existe no banco.
+
+Consequência imediata:
+
+- Todas as leituras retornam `0 rows` → sistema usa fallback de env vars.
+- O UPSERT falha com erro Postgres por falta de constraint UNIQUE.
+- O painel admin não consegue salvar configurações.
 
 Conclusão:
 
-> O projeto não deve ser tratado como multi-tenant real ainda.
+> O bloqueio crítico atual é a migration de `tenant_domain`. Nada mais deve ser implementado antes disso.
+
+Ver auditoria completa: `docs/TENANT_DOMAIN_AUDIT.md`.
 
 ---
 
@@ -228,17 +238,20 @@ Esses pontos são importantes, mas não devem vir antes da segurança operaciona
 - revisar Service Worker;
 - revisar OneSignal;
 - unificar fonte do App ID;
-- migrar para multi-tenant real, se ainda fizer sentido.
+- evoluir para multi-tenant completo com tabelas de push e auditoria isoladas por tenant.
 
 ---
 
-## 8. Decisão Recomendada
+## 8. Decisão Arquitetural (aprovada em 2026-06-28)
 
-Manter por enquanto:
+> **Banco único compartilhado com isolamento por `tenant_domain`.**
 
-> **White label por deploy individual.**
+Cada deploy Vercel compartilha o mesmo banco Supabase. O campo `tenant_domain` em `app_settings` isola as configurações por cliente, usando o hostname de `NEXT_PUBLIC_PUBLIC_URL` como chave.
 
-Preparar para o futuro:
+**Bloqueio atual:** a migration que cria a coluna e o índice único ainda não foi executada.
 
-> **Multi-tenant real somente depois de estabilidade, logs e staging.**
+**Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
+**Detalhes completos:** `docs/TENANT_DOMAIN_AUDIT.md`
+
+Nenhuma outra implementação deve iniciar antes da conclusão da migration e validação em produção.
 
