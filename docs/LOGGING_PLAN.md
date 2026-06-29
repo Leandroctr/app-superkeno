@@ -276,7 +276,7 @@ Fase 1:
 Fase 2:
 
 - criar tabela `error_logs`;
-- criar helper `logServerError()`.
+- persistir erros de servidor no banco.
 
 Fase 3:
 
@@ -286,4 +286,61 @@ Fase 3:
 Fase 4:
 
 - criar dashboard de diagnóstico no admin.
+
+---
+
+## 6. Logs Implementados — Fase 1
+
+**Data:** 2026-06-29  
+**Módulo:** `lib/logger/` (types.ts, server.ts, client.ts, index.ts)  
+**Prefixos:** `[server-log]` para servidor · `[client-log]` para cliente  
+
+### 6.1 lib/app-settings.server.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `settings_fetch_start` | info | `tenantDomain` | chaves, tokens, senha | Rastrear início da busca por tenant |
+| `settings_fetch_success` | info | `tenantDomain`, `source: "database"`, `appName`, `publicUrl`, `hasOneSignalAppId` (bool), `durationMs` | `oneSignalAppId` completo, service role key | Confirmar leitura do banco com isolamento correto |
+| `settings_fetch_not_found` | warn | `tenantDomain`, `source: "env"`, `durationMs` | — | Alertar quando tenant_domain não tem registro |
+| `settings_fetch_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorMessage` | stack completa, chaves Supabase | Diagnosticar falhas na query ao banco |
+| `settings_fetch_skip` | warn | `tenantDomain`, `reason: "supabase_not_configured"`, `source: "env"` | service role key | Alertar quando Supabase não está configurado |
+
+### 6.2 app/api/settings/route.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `api_settings_response` | info | `tenantDomain`, `source`, `appName`, `publicUrl`, `hasOneSignalAppId` (bool), `durationMs` | `oneSignalAppId` completo, tokens | Confirmar fonte dos dados retornados pela API |
+| `api_settings_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorMessage` | chaves Supabase | Diagnosticar falhas na rota pública de settings |
+| `api_settings_fallback` | warn | `tenantDomain`, `reason: "supabase_not_configured"`, `source: "env"` | — | Alertar quando rota cai em fallback sem Supabase |
+
+### 6.3 app/api/push/send/route.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `push_send_started` | info | `targetType`, `recipientCount`, `maskedAppId` (8 chars + "..."), `campaignId` | `ONESIGNAL_REST_API_KEY`, App ID completo | Rastrear início do envio de push |
+| `push_send_onesignal_response` | info | `targetType`, `recipientCount`, `httpStatus`, `ok`, `hasNotificationId` (bool), `maskedAppId`, `campaignId` | notification_id completo, REST key | Confirmar resultado da chamada ao OneSignal |
+| `push_send_parse_error` | warn | `targetType`, `httpStatus`, `maskedAppId`, `campaignId` | body da resposta | Alertar quando resposta do OneSignal não é JSON válido |
+| `push_send_parse_error_detail` | error | `errorName`, `errorMessage` | stack completa | Detalhe técnico do erro de parse |
+| `push_send_error` | error | `step` (fetch_subscriptions / create_campaign), `targetType`, `recipientCount`, `maskedAppId`, `errorName`, `errorMessage` | — | Rastrear falhas antes da chamada ao OneSignal |
+
+### 6.4 components/service-worker-register.tsx
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `sw_register_error` | error | `swPath: "/sw.js"`, `errorName`, `errorMessage` | stack completa | Substituir `.catch(() => {})` silencioso por log rastreável |
+
+### Módulo lib/logger/
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `types.ts` | Tipos: `LogLevel`, `LogMetadata`, `LogEntry` |
+| `server.ts` | `logServerInfo`, `logServerWarn`, `logServerError` — com `import "server-only"` |
+| `client.ts` | `logClientInfo`, `logClientWarn`, `logClientError` — para uso em componentes client |
+| `index.ts` | Re-exporta tipos + helpers server (barreira server-only preservada) |
+
+**Invariantes do módulo:**
+- Nenhum helper lança exceção — todos envolvidos em `try/catch`
+- Erros logam apenas `name` e `message`, nunca stack completa
+- `oneSignalAppId` é mascarado: `appId.slice(0, 8) + "..."`
+- `ONESIGNAL_REST_API_KEY` e `SUPABASE_SERVICE_ROLE_KEY` nunca aparecem nos logs
 

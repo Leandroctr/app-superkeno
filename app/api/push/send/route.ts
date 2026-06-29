@@ -3,6 +3,7 @@ import type { AppSettings } from "@/lib/app-settings";
 import { getAppSettings } from "@/lib/app-settings.server";
 import { isAdminAuthenticated } from "@/lib/admin-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
 
 type SendPayload = {
   title?: string;
@@ -38,6 +39,10 @@ function normalizePayload(payload: SendPayload, settings: AppSettings) {
   };
 }
 
+function maskAppId(appId: string): string {
+  return appId.slice(0, 8) + "...";
+}
+
 export async function POST(request: Request) {
   if (!(await isAdminAuthenticated())) {
     return NextResponse.json(
@@ -56,6 +61,8 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+
+  const maskedAppId = maskAppId(settings.oneSignalAppId);
 
   let payload: SendPayload;
 
@@ -86,6 +93,11 @@ export async function POST(request: Request) {
     .limit(limit);
 
   if (subscriptionsError) {
+    logServerError("push_send_error", subscriptionsError, {
+      step: "fetch_subscriptions",
+      targetType: data.targetType,
+      maskedAppId,
+    });
     return NextResponse.json(
       { ok: false, error: "Nao foi possivel buscar inscritos." },
       { status: 500 },
@@ -117,11 +129,24 @@ export async function POST(request: Request) {
     .single();
 
   if (createCampaignError || !campaign) {
+    logServerError("push_send_error", createCampaignError, {
+      step: "create_campaign",
+      targetType: data.targetType,
+      recipientCount: targetCount,
+      maskedAppId,
+    });
     return NextResponse.json(
       { ok: false, error: "Nao foi possivel registrar campanha." },
       { status: 500 },
     );
   }
+
+  logServerInfo("push_send_started", {
+    targetType: data.targetType,
+    recipientCount: targetCount,
+    maskedAppId,
+    campaignId: campaign.id,
+  });
 
   const oneSignalResponse = await fetch("https://api.onesignal.com/notifications", {
     method: "POST",
@@ -138,9 +163,31 @@ export async function POST(request: Request) {
     }),
   });
 
-  const oneSignalResult = await oneSignalResponse.json().catch(() => ({}));
+  let oneSignalResult: Record<string, unknown> = {};
+  try {
+    oneSignalResult = await oneSignalResponse.json();
+  } catch (parseErr) {
+    logServerWarn("push_send_parse_error", {
+      targetType: data.targetType,
+      httpStatus: oneSignalResponse.status,
+      maskedAppId,
+      campaignId: campaign.id,
+    });
+    logServerError("push_send_parse_error_detail", parseErr);
+  }
+
   const notificationId =
     typeof oneSignalResult.id === "string" ? oneSignalResult.id : null;
+
+  logServerInfo("push_send_onesignal_response", {
+    targetType: data.targetType,
+    recipientCount: targetCount,
+    httpStatus: oneSignalResponse.status,
+    ok: oneSignalResponse.ok,
+    hasNotificationId: Boolean(notificationId),
+    maskedAppId,
+    campaignId: campaign.id,
+  });
 
   const { error: campaignError } = await supabase
     .from("push_campaigns")
