@@ -2,6 +2,7 @@
 -- Migration: 002_add_tenant_domain_to_app_settings
 -- Projeto: app-big-pwa
 -- Data planejada: 2026-06-28
+-- Atualizado em: 2026-06-29 — lógica ajustada para banco com dois tenants
 -- Status: AGUARDANDO EXECUÇÃO — não executar sem aprovação e backup prévio
 -- Rollback disponível: 002_add_tenant_domain_to_app_settings.rollback.sql
 -- =============================================================
@@ -15,46 +16,35 @@
 --
 -- Arquitetura:
 --   Banco único compartilhado. Isolamento por tenant_domain.
---   Cada deploy é identificado pelo hostname de NEXT_PUBLIC_PUBLIC_URL.
+--   Cada linha é identificada pelo hostname extraído de public_url.
 --
--- Ordem de execução dos passos (importante):
+-- Dados esperados antes de executar:
+--   id 34d1e99f... / Big Pix     / public_url https://pwa.app-bigpix.com
+--   id 4d72e1d0... / MegaBingo7  / public_url https://pwa.app-megabingo7.com
+--
+-- Ordem de execução dos passos:
 --   1. Adicionar coluna tenant_domain (DDL idempotente)
---   2. Validar placeholder — falha intencionalmente se não foi substituído
---   3. Preencher tenant_domain das linhas existentes com NULL
---   4. Validar que não restou nenhuma linha com tenant_domain NULL
---   5. Criar índice único (somente após validação aprovada)
+--   2. Preencher tenant_domain de cada linha a partir de public_url
+--      (remove protocolo https?:// e barra final)
+--   3. Validar que nenhuma linha ficou com tenant_domain NULL
+--   4. Validar que não há valores duplicados em tenant_domain
+--   5. Criar índice único (somente após validações aprovadas)
 --
 --   Se qualquer passo falhar, a transação inteira é revertida.
 --   Nenhum estado parcial é persistido.
--- =============================================================
-
-
--- =============================================================
--- CONFIGURAÇÃO OBRIGATÓRIA ANTES DE EXECUTAR
--- =============================================================
 --
--- Passo obrigatório:
---   1. Abrir o painel do Vercel para este deploy.
---   2. Copiar o valor da variável de ambiente NEXT_PUBLIC_PUBLIC_URL.
---   3. Extrair somente o hostname (sem https://, sem path, sem porta).
---      Exemplo:
---        NEXT_PUBLIC_PUBLIC_URL = 'https://app.cliente.com'
---        hostname = 'app.cliente.com'
---   4. Substituir 'SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE' na declaração
---      v_domain abaixo pelo hostname exato.
---
--- A migration falhará intencionalmente se o placeholder não for substituído.
--- Isso é um comportamento esperado — não é um bug.
+-- Não há placeholder para substituir — a lógica lê public_url do próprio banco.
 -- =============================================================
 
 
 begin;
 
+
 -- -------------------------------------------------------------
 -- Passo 1: adicionar coluna tenant_domain
 -- -------------------------------------------------------------
 -- Idempotente: ADD COLUMN IF NOT EXISTS não falha se a coluna já existir.
--- Tipo text sem NOT NULL: linhas legadas podem ter NULL até o passo 3.
+-- Tipo text sem NOT NULL: linhas com public_url preenchido serão migradas no passo 2.
 -- singleton_key não é alterado nem removido.
 
 alter table public.app_settings
@@ -62,57 +52,35 @@ alter table public.app_settings
 
 
 -- -------------------------------------------------------------
--- Passos 2, 3 e 4: validar, preencher e verificar
+-- Passos 2, 3 e 4: preencher e validar
 -- -------------------------------------------------------------
--- Este bloco:
---   - Falha com mensagem clara se o placeholder não foi substituído.
---   - Falha com mensagem clara se o domínio contém protocolo (http/https).
---   - Preenche tenant_domain de todas as linhas onde está NULL.
---   - Falha com mensagem clara se ainda restarem linhas com NULL após o UPDATE.
---   - Só termina com sucesso quando nenhum NULL restar.
---
--- Se qualquer RAISE EXCEPTION for acionado, toda a transação é revertida,
--- incluindo o ADD COLUMN do passo 1.
 
 do $$
 declare
-  v_domain    text    := 'SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE';
-  v_updated   integer;
+  v_updated    integer;
   v_null_count integer;
+  v_dup_count  integer;
 begin
 
-  -- Passo 2: validar que o placeholder foi substituído
-  if v_domain = 'SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE' then
-    raise exception
-      E'MIGRATION ABORTADA — placeholder não substituído.\n'
-      'Substitua ''SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE'' pelo hostname real do deploy.\n'
-      'Exemplo: v_domain text := ''app.cliente.com'';';
-  end if;
-
-  -- Passo 2b: validar que não foi passada a URL completa por engano
-  if v_domain like 'http://%' or v_domain like 'https://%' then
-    raise exception
-      E'MIGRATION ABORTADA — v_domain contém protocolo.\n'
-      'Use somente o hostname, sem https:// e sem path.\n'
-      'Recebido: ''%''\n'
-      'Correto:  ''app.cliente.com''',
-      v_domain;
-  end if;
-
-  if v_domain = '' then
-    raise exception
-      'MIGRATION ABORTADA — v_domain está vazio. Defina o hostname do deploy.';
-  end if;
-
-  -- Passo 3: preencher tenant_domain das linhas com NULL
+  -- Passo 2: preencher tenant_domain a partir de public_url
+  --   - remove o protocolo (https:// ou http://)
+  --   - remove a barra final, se existir
+  --   - só atualiza linhas onde tenant_domain ainda é NULL
+  --     e public_url está preenchido
   update public.app_settings
-  set    tenant_domain = v_domain
-  where  tenant_domain is null;
+  set    tenant_domain = regexp_replace(
+                           regexp_replace(public_url, '^https?://', ''),
+                           '/$', ''
+                         )
+  where  tenant_domain is null
+    and  public_url    is not null
+    and  public_url    <> '';
 
   get diagnostics v_updated = row_count;
-  raise notice 'Passo 3 OK: % linha(s) atualizada(s) com tenant_domain = ''%''.', v_updated, v_domain;
+  raise notice 'Passo 2 OK: % linha(s) atualizada(s) com tenant_domain extraído de public_url.', v_updated;
 
-  -- Passo 4: garantir que nenhuma linha ficou com NULL
+
+  -- Passo 3: garantir que nenhuma linha ficou com tenant_domain NULL
   select count(*)
   into   v_null_count
   from   public.app_settings
@@ -120,12 +88,34 @@ begin
 
   if v_null_count > 0 then
     raise exception
-      E'MIGRATION ABORTADA — ainda existem % linha(s) com tenant_domain NULL após o UPDATE.\n'
-      'Verifique a tabela app_settings e corrija antes de criar o índice.',
+      E'MIGRATION ABORTADA — % linha(s) com tenant_domain NULL após o UPDATE.\n'
+      'Verifique se todas as linhas de app_settings têm public_url preenchido.\n'
+      'Corrija public_url antes de executar esta migration.',
       v_null_count;
   end if;
 
-  raise notice 'Passo 4 OK: nenhuma linha com tenant_domain NULL. Prosseguindo para criação do índice.';
+  raise notice 'Passo 3 OK: nenhuma linha com tenant_domain NULL.';
+
+
+  -- Passo 4: garantir que não há tenant_domain duplicado
+  select count(*)
+  into   v_dup_count
+  from (
+    select tenant_domain
+    from   public.app_settings
+    group  by tenant_domain
+    having count(*) > 1
+  ) duplicates;
+
+  if v_dup_count > 0 then
+    raise exception
+      E'MIGRATION ABORTADA — % valor(es) de tenant_domain duplicado(s) encontrado(s).\n'
+      'Dois ou mais registros têm o mesmo public_url.\n'
+      'Corrija os dados antes de criar o índice único.',
+      v_dup_count;
+  end if;
+
+  raise notice 'Passo 4 OK: nenhum tenant_domain duplicado. Prosseguindo para criação do índice.';
 
 end $$;
 
@@ -135,8 +125,6 @@ end $$;
 -- -------------------------------------------------------------
 -- Só é executado se os passos 2, 3 e 4 foram bem-sucedidos.
 -- Necessário para que .upsert({ onConflict: "tenant_domain" }) funcione.
--- Postgres permite múltiplas linhas com tenant_domain = NULL em índices únicos
--- porque NULL != NULL por padrão — mas após o passo 4 não há NULLs.
 -- Idempotente: CREATE UNIQUE INDEX IF NOT EXISTS não falha se já existir.
 
 create unique index if not exists app_settings_tenant_domain_key
@@ -152,9 +140,13 @@ commit;
 -- Verificação pós-execução (executar manualmente após o commit)
 -- =============================================================
 --
--- 1. Confirmar coluna e valor:
---      SELECT id, tenant_domain, app_name, updated_at
+-- 1. Confirmar coluna e valores:
+--      SELECT id, tenant_domain, app_name, public_url, updated_at
 --      FROM public.app_settings;
+--
+--    Resultado esperado:
+--      34d1e99f... | pwa.app-bigpix.com     | Big Pix    | https://pwa.app-bigpix.com
+--      4d72e1d0... | pwa.app-megabingo7.com | MegaBingo7 | https://pwa.app-megabingo7.com
 --
 -- 2. Confirmar índice criado:
 --      SELECT indexname, indexdef
@@ -164,13 +156,14 @@ commit;
 --
 -- 3. Confirmar que o onConflict funciona (substituir pelo domínio real):
 --      INSERT INTO public.app_settings (tenant_domain, app_name)
---      VALUES ('app.cliente.com', 'Teste Conflict')
+--      VALUES ('pwa.app-bigpix.com', 'Teste Conflict')
 --      ON CONFLICT (tenant_domain)
 --      DO UPDATE SET app_name = EXCLUDED.app_name
 --      RETURNING id, tenant_domain, app_name;
 --      -- deve retornar 1 linha atualizada, não inserir nova
 --
--- 4. Validar via API (após deploy com a migration aplicada):
+-- 4. Validar via API (após execução da migration):
 --      GET /api/settings
 --      -- "source" deve ser "database", não "env"
+--      -- testar para cada domínio (bigpix e megabingo7)
 -- =============================================================

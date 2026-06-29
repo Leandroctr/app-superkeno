@@ -6,7 +6,7 @@
 **Data:** 2026-06-28  
 **Objetivo:** validar completamente a implementação de `tenant_domain` introduzida pelo merge dos 5 commits remotos antes de iniciar qualquer desenvolvimento.  
 **Escopo:** análise estática inicial — nenhum arquivo foi alterado durante a auditoria.  
-**Atualizado em:** 2026-06-28 — decisão arquitetural registrada; migration planejada.
+**Atualizado em:** 2026-06-29 — migration ajustada para banco com dois tenants; lógica de placeholder removida.
 
 ---
 
@@ -229,16 +229,18 @@ Os arquivos abaixo estavam desatualizados no momento da auditoria. Foram corrigi
 **Migration planejada:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`
 
 ```sql
-alter table public.app_settings
-  add column if not exists tenant_domain text;
-
-create unique index if not exists app_settings_tenant_domain_key
-  on public.app_settings (tenant_domain);
-
--- UPDATE public.app_settings
--- SET    tenant_domain = 'SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE'
--- WHERE  tenant_domain IS NULL;
+-- Extrai hostname de public_url para cada linha com tenant_domain NULL
+update public.app_settings
+set    tenant_domain = regexp_replace(
+                         regexp_replace(public_url, '^https?://', ''),
+                         '/$', ''
+                       )
+where  tenant_domain is null
+  and  public_url    is not null
+  and  public_url    <> '';
 ```
+
+**Não há placeholder para substituir.** A migration lê `public_url` do próprio banco.
 
 **Nota técnica:** o índice não é parcial (`WITHOUT WHERE`). O Postgres permite múltiplas linhas com `tenant_domain = NULL` em índices únicos porque `NULL != NULL` por padrão. Um índice parcial (`WHERE IS NOT NULL`) não seria compatível com `ON CONFLICT (tenant_domain)` sem predicado no UPSERT.
 
@@ -246,27 +248,25 @@ create unique index if not exists app_settings_tenant_domain_key
 
 ---
 
-### 4.2 CRÍTICO — Linha seed incompatível com novo código
+### 4.2 CRÍTICO — Linhas existentes sem tenant_domain (resolvido pela migration)
 
-O schema atual seed insere:
+O banco em produção tem duas linhas em `app_settings` com `tenant_domain = NULL`:
 
-```sql
-insert into public.app_settings (singleton_key, app_name, ...)
-values (true, 'App Big', ...)
-on conflict (singleton_key) do nothing;
-```
+| id | app_name | public_url |
+|---|---|---|
+| `34d1e99f...` | Big Pix | `https://pwa.app-bigpix.com` |
+| `4d72e1d0...` | MegaBingo7 | `https://pwa.app-megabingo7.com` |
 
-Essa linha tem `tenant_domain = NULL`. Ela nunca será encontrada pelos novos SELECTs.
+A migration `002` resolve isso automaticamente: extrai o hostname de `public_url` via `regexp_replace` (remove protocolo e barra final) e preenche `tenant_domain` para cada linha. Não há placeholder manual.
 
-**Para um deploy existente:** é necessário executar manualmente:
+**Resultado esperado após a migration:**
 
-```sql
-update public.app_settings
-set tenant_domain = 'hostname.do.deploy.aqui'
-where tenant_domain is null;
-```
+| tenant_domain |
+|---|
+| `pwa.app-bigpix.com` |
+| `pwa.app-megabingo7.com` |
 
-Para um deploy novo: o seed não insere `tenant_domain`, então a linha seed também ficará com NULL e nunca será encontrada.
+Para novos deploys: o processo de onboarding deve garantir que `public_url` esteja preenchido antes de executar a migration.
 
 ---
 
@@ -393,8 +393,10 @@ O código pós-merge já opera com `tenant_domain`. Reverter para `singleton_key
 
 O que faz:
 1. Adiciona coluna `tenant_domain text` em `app_settings` (idempotente).
-2. Cria índice único em `tenant_domain` — necessário para `ON CONFLICT (tenant_domain)` (idempotente).
-3. Bloco UPDATE comentado: deve ser descomentado e preenchido com o hostname real antes de executar.
+2. Preenche `tenant_domain` de cada linha extraindo o hostname de `public_url` via `regexp_replace` — sem placeholder manual.
+3. Valida que nenhuma linha ficou com `tenant_domain NULL`.
+4. Valida que não há valores duplicados.
+5. Cria índice único em `tenant_domain` — necessário para `ON CONFLICT (tenant_domain)` (idempotente).
 
 O que preserva:
 - Dados existentes em `app_settings` não são apagados.
@@ -412,7 +414,7 @@ Remove índice e coluna. O sistema volta ao estado de falha silenciosa anterior.
 | Risco | Probabilidade | Mitigação |
 |---|---|---|
 | Linha existente não atualizada (UPDATE não descomentado) | Alta | Validar `GET /api/settings` após migration — deve retornar `source: database` |
-| Hostname errado no UPDATE | Média | Confirmar exatamente `new URL(NEXT_PUBLIC_PUBLIC_URL).hostname` antes de executar |
+| public_url incorreto ou vazio em alguma linha | Baixa | Conferir `SELECT id, app_name, public_url FROM app_settings` antes de executar |
 | Banco sem backup antes da migration | Alta | **Obrigatório fazer backup antes de executar qualquer migration** |
 | Conflito se já existir linha com mesmo tenant_domain | Baixa | O índice único criado na migration já previne duplicatas futuras |
 

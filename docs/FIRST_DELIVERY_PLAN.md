@@ -207,17 +207,25 @@ Cada etapa é independente e pode ser revisada antes da próxima.
 **Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
 **Arquivo de rollback:** `supabase/migrations/002_add_tenant_domain_to_app_settings.rollback.sql`
 
+**Contexto atual do banco (2026-06-29):**
+
+| id | app_name | public_url |
+|---|---|---|
+| `34d1e99f...` | Big Pix | `https://pwa.app-bigpix.com` |
+| `4d72e1d0...` | MegaBingo7 | `https://pwa.app-megabingo7.com` |
+
 **Pré-requisitos obrigatórios antes de executar:**
 
 1. Fazer backup completo do banco Supabase.
-2. Identificar o hostname exato: `new URL(NEXT_PUBLIC_PUBLIC_URL).hostname` no painel Vercel.
-3. Abrir `002_add_tenant_domain_to_app_settings.sql`, descomentar o bloco UPDATE e substituir `SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE` pelo hostname real.
-4. Executar no Supabase Studio (SQL Editor).
+2. Confirmar que as duas linhas acima têm `public_url` preenchido e correto.
+3. Executar no Supabase Studio (SQL Editor) — não há placeholder para substituir.
 
 **O que a migration faz:**
 - Adiciona coluna `tenant_domain text` em `app_settings` (idempotente).
+- Preenche `tenant_domain` de cada linha extraindo o hostname de `public_url` via `regexp_replace` (remove `https?://` e barra final) — sem intervenção manual por deploy.
+- Valida que nenhuma linha ficou com `tenant_domain NULL`.
+- Valida que não há valores duplicados.
 - Cria índice único em `tenant_domain` (compatível com `ON CONFLICT (tenant_domain)`).
-- Preenche a linha existente com o hostname do deploy (bloco UPDATE manual).
 - Preserva `singleton_key` e todos os dados existentes.
 
 **Critérios de conclusão desta etapa:**
