@@ -31,13 +31,28 @@ banco (via `service_role`, sem escrita) para confirmar o estado real. Resultado:
   | Oba Premios | `pwa.app-obapremios.com` | false |
   | PREMIOS AO VIVO | `pwa.app-premiosaovivo.com` | false |
 
-- **Índice único (`app_settings_tenant_domain_key`):** não é possível confirmar via
-  API REST do Supabase (PostgREST não expõe `pg_indexes`/`pg_constraint`, e não há
-  acesso `psql`/conexão Postgres direta neste ambiente). Evidência indireta forte de
-  que existe: os 4 `tenant_domain` são distintos, não-nulos, com `updated_at`
-  recentes (até 2026-07-01) — consistente com saves reais do painel admin via
-  `UPSERT ... ON CONFLICT (tenant_domain)`, que exige o índice único para não
-  falhar. Confirmação formal pendente via SQL Editor (query fornecida ao operador).
+- **Índice único confirmado formalmente em 2026-07-02**, via SQL Editor (query
+  `select indexname, indexdef from pg_indexes where tablename = 'app_settings'`,
+  rodada pelo operador):
+
+  ```
+  app_settings_tenant_domain_idx | CREATE UNIQUE INDEX app_settings_tenant_domain_idx
+                                    ON public.app_settings USING btree (tenant_domain)
+  ```
+
+  **Nome real diferente do previsto:** o arquivo de migration nomeia o índice
+  `app_settings_tenant_domain_key`, mas o índice realmente aplicado no banco se
+  chama `app_settings_tenant_domain_idx`. Funcionalmente equivalente — é um
+  `UNIQUE INDEX` sobre `tenant_domain`, o que é o que importa para o
+  `UPSERT ... ON CONFLICT (tenant_domain)` funcionar. A divergência de nome indica
+  que a coluna/índice pode ter sido criada por um script equivalente, não
+  necessariamente pela execução literal do arquivo
+  `002_add_tenant_domain_to_app_settings.sql` — sem impacto funcional conhecido,
+  mas registrado aqui para rastreabilidade.
+  Também não há constraint `UNIQUE` formal em `pg_constraint` (só a `PRIMARY KEY`
+  em `id`) — esperado, já que `CREATE UNIQUE INDEX` não registra uma constraint,
+  apenas um índice. Isso não afeta o `ON CONFLICT (tenant_domain)`, que funciona
+  com índice único simples.
 - **Backup lógico da tabela `app_settings`** (JSON completo, 4 linhas) foi salvo
   fora de qualquer repositório git antes de qualquer nova alteração de schema.
 - **Nenhuma alteração de schema foi executada nesta etapa.** As seções 1 a 9 abaixo
@@ -409,7 +424,7 @@ Remove o índice e a coluna. O sistema volta ao estado anterior (falha silencios
 |---|---|---|
 | `tenant_domain` existe no schema (banco)? | Não — migration planejada, pendente de execução | **Sim — confirmado em produção** |
 | `tenant_domain` existe em `supabase/schema.sql` (arquivo)? | Não | **Ainda não — pendência de baixo risco** |
-| Constraint UNIQUE existe? | Não — incluída na migration | **Forte evidência de sim; confirmação formal via SQL Editor em andamento** |
+| Índice único existe? | Não — incluído na migration | **Sim — confirmado via SQL Editor (`app_settings_tenant_domain_idx`, nome diferente do previsto mas equivalente)** |
 | Código lê por `tenant_domain`? | Sim — 3 arquivos | Sim (sem mudança) |
 | Código escreve por `tenant_domain`? | Sim — 1 arquivo (UPSERT quebrado até migration) | **Sim, e funcionando** |
 | Padrão antigo (`singleton_key`) ainda existe no código? | Não — apenas no schema (legado) | Sem mudança |

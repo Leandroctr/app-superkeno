@@ -66,7 +66,7 @@ Consequência histórica (antes da migration rodar):
 - O UPSERT falhava com erro Postgres por falta de constraint UNIQUE.
 - O painel admin não conseguia salvar configurações.
 
-**Situação atual (2026-07-02):** a migration já foi executada. As 4 linhas de `app_settings` têm `tenant_domain` preenchido corretamente. O índice único (`app_settings_tenant_domain_key`) tem evidência indireta forte de existir (saves recentes do admin em produção, consistentes com `ON CONFLICT (tenant_domain)` funcionando), com confirmação formal via SQL Editor em andamento.
+**Situação atual (2026-07-02):** a migration já foi executada. As 4 linhas de `app_settings` têm `tenant_domain` preenchido corretamente. O índice único em `tenant_domain` foi confirmado formalmente via SQL Editor (nome real `app_settings_tenant_domain_idx`, não `_key` como previsto no arquivo da migration — funcionalmente equivalente).
 
 Conclusão:
 
@@ -280,7 +280,7 @@ Esses pontos são importantes, mas não devem vir antes da segurança operaciona
 
 Cada deploy Vercel compartilha o mesmo banco Supabase. O campo `tenant_domain` em `app_settings` isola as configurações por cliente, usando o hostname de `NEXT_PUBLIC_PUBLIC_URL` como chave.
 
-**Status (atualizado em 2026-07-02):** a migration já foi executada. Coluna `tenant_domain` confirmada em produção, com as 4 linhas de `app_settings` (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo) devidamente isoladas. Índice único com forte evidência indireta de existir, confirmação formal via SQL Editor em andamento.
+**Status (atualizado em 2026-07-02):** a migration já foi executada. Coluna `tenant_domain` confirmada em produção, com as 4 linhas de `app_settings` (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo) devidamente isoladas. Índice único confirmado formalmente via SQL Editor (nome real `app_settings_tenant_domain_idx`, funcionalmente equivalente ao `_key` previsto na migration).
 
 **Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
 **Detalhes completos:** `docs/TENANT_DOMAIN_AUDIT.md`
