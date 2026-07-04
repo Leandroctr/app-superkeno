@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { getAppSettings } from "@/lib/app-settings.server";
 
 type SubscribePayload = {
   onesignalId?: string;
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
     );
   }
 
+  const settings = await getAppSettings();
   const now = new Date().toISOString();
   const { error } = await supabase.from("push_subscriptions").upsert(
     {
@@ -70,6 +72,8 @@ export async function POST(request: Request) {
       device_type: deviceType,
       last_seen_at: now,
       updated_at: now,
+      tenant_domain: settings.tenantDomain,
+      onesignal_app_id: settings.oneSignalAppId || null,
     },
     {
       onConflict: "onesignal_id",

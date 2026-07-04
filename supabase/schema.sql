@@ -8,7 +8,9 @@ create table if not exists public.push_subscriptions (
   device_type text not null default 'web',
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  tenant_domain text,
+  onesignal_app_id text
 );
 
 create table if not exists public.push_campaigns (
@@ -22,7 +24,9 @@ create table if not exists public.push_campaigns (
   recipient_count integer not null default 0,
   error_message text,
   sent_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  tenant_domain text,
+  onesignal_app_id text
 );
 
 create table if not exists public.app_settings (
@@ -139,3 +143,9 @@ create index if not exists push_subscriptions_created_at_idx
 
 create index if not exists push_campaigns_created_at_idx
   on public.push_campaigns (created_at desc);
+
+create index if not exists push_subscriptions_tenant_domain_idx
+  on public.push_subscriptions (tenant_domain);
+
+create index if not exists push_campaigns_tenant_domain_idx
+  on public.push_campaigns (tenant_domain);
