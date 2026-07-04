@@ -50,6 +50,10 @@ PWAs ativos:
 |---|---|---|---|
 | BigPix | `pwa.app-bigpix.com` | `moline/app-big` | `Leandroctr/app-big` |
 | MegaBingo7 | `pwa.app-megabingo7.com` | `moline/app-megabingo7` | `Leandroctr/app-megabingo7` |
+| ObaPremios | `pwa.app-obapremios.com` | `moline/app-obapremios` | `Leandroctr/app-obapremios` |
+| PremiosAoVivo | `pwa.app-premiosaovivo.com` | `moline/app-premiosaovivo` | `Leandroctr/app-premiosaovivo` |
+| Pix Keno | `pwa.app-pixkeno.com` | `moline/app-pixkeno` | `Leandroctr/app-pixkeno` |
+| SuperKeno | `pwa.app-superkeno.com` | `moline/app-superkeno` | `Leandroctr/app-superkeno` |
 
 ### Distinção entre commit local e versão aprovada
 
