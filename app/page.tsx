@@ -41,6 +41,16 @@ type PlatformState = {
   url: string;
 };
 
+function resolveSplashIconUrl(settings: AppSettings): string | undefined {
+  return (
+    settings.splashImageUrl ||
+    settings.logoUrl ||
+    settings.icon512Url ||
+    settings.icon192Url ||
+    undefined
+  );
+}
+
 function getClientFallbackSettings(): AppSettings {
   return {
     appName: appConfigClient.appName,
@@ -74,6 +84,7 @@ export default function Home() {
     url: "",
   });
   const hasPlatformError = platformState.mounted && !platformState.isValid;
+  const splashIconUrl = resolveSplashIconUrl(settings);
   const appInitial =
     settings.appShortName.trim().charAt(0).toUpperCase() ||
     settings.appName.trim().charAt(0).toUpperCase() ||
@@ -194,20 +205,8 @@ export default function Home() {
           position: "fixed",
           inset: 0,
           backgroundColor: settings.themeColor || "#000",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
         }}
-      >
-        <Image
-          alt=""
-          height={96}
-          priority
-          src={settings.icon192Url || "/icons/icon-192.svg"}
-          unoptimized
-          width={96}
-        />
-      </div>
+      />
     );
   }
 
@@ -219,13 +218,13 @@ export default function Home() {
     >
       <section className="flex w-full max-w-sm flex-col items-center text-center">
         <div className="mb-6">
-          {settings.logoUrl ? (
+          {splashIconUrl ? (
             <Image
               alt={`${settings.appName} logo`}
               className="size-20 rounded-3xl object-cover shadow-xl shadow-slate-900/15"
               height={80}
               priority
-              src={settings.logoUrl}
+              src={splashIconUrl}
               unoptimized
               width={80}
             />
