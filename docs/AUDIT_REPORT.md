@@ -28,6 +28,8 @@ O código foi atualizado para operar como multi-tenant por domínio (`tenant_dom
 
 > **Gap crítico (histórico, já resolvido):** a coluna `tenant_domain` não existia em `supabase/schema.sql` nem no banco. Leitura sempre retornava fallback de env vars. Escrita falhava com erro Postgres. **`supabase/schema.sql` ainda não foi atualizado para refletir a coluna** — pendência de baixo risco, não bloqueante, já que o banco de produção já tem a coluna aplicada via migration.
 
+> **Atualização 2026-07-04:** o projeto já opera com **6 tenants ativos** no mesmo banco compartilhado (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo, Pix Keno, SuperKeno — ver `docs/TENANT_DOMAIN_AUDIT.md`), e o risco de push sem isolamento por tenant (seção 4.4) — que se tornou real assim que OneSignal foi habilitado nos 6 — foi resolvido pela migration `004_add_tenant_isolation_to_push_tables.sql`, validada em produção. Ver seção 4.4 para o registro completo.
+
 Para a auditoria completa da implementação, status atual e ações necessárias, ler: `docs/TENANT_DOMAIN_AUDIT.md`.
 
 ---
@@ -162,6 +164,76 @@ Recomendação:
 ---
 
 ### 4.4 Push sem isolamento por tenant
+
+> **Atualização 2026-07-04: resolvido.** O banco compartilhado (6 tenants ativos,
+> ver `docs/TENANT_DOMAIN_AUDIT.md`) já tinha OneSignal habilitado em todos, sem
+> nenhuma coluna de tenant em `push_subscriptions`/`push_campaigns` — o risco
+> descrito abaixo (escrito quando o projeto ainda era considerado single-tenant)
+> deixou de ser teórico. Migration `004_add_tenant_isolation_to_push_tables.sql`
+> aplicada em produção (uma única vez, no banco único compartilhado) resolve isso.
+> Texto original mantido abaixo como registro histórico.
+>
+> **O que a migration 004 mudou:**
+> - `push_subscriptions` ganhou as colunas `tenant_domain` e `onesignal_app_id`
+>   (nullable, sem backfill) e um índice em `tenant_domain`.
+> - `push_campaigns` ganhou as mesmas duas colunas e o mesmo índice.
+> - Nenhum dado foi apagado, nenhuma tabela recriada, a constraint `unique` em
+>   `onesignal_id` e a RLS existente não foram alteradas.
+> - As 33 inscrições legadas (anteriores à migration) ficaram com
+>   `tenant_domain = null` de propósito — não foram atribuídas a nenhum tenant por
+>   suposição. Uma comparação `.eq("tenant_domain", X)` nunca é verdadeira contra
+>   `NULL`, então essas linhas somem sozinhas de qualquer contagem, listagem ou
+>   envio por tenant.
+>
+> **O que o código passou a fazer** (`app/api/push/subscribe/route.ts`,
+> `app/api/push/send/route.ts`, `app/admin/page.tsx`, idêntico nos 6 repos):
+> - Ao registrar uma inscrição, grava `tenant_domain` e `onesignal_app_id` do
+>   tenant atual (via `getAppSettings()`).
+> - `/admin` conta e lista (inscritos e histórico de campanhas) só do tenant atual.
+> - "Enviar para todos" busca inscritos filtrando por `tenant_domain` do tenant
+>   atual — nunca mais por `permission_status = granted` sem filtro nenhum.
+>   Decisão: o filtro de envio usa só `tenant_domain`, sem também exigir
+>   `onesignal_app_id`, para não correr o risco de zerar inscrições válidas do
+>   próprio tenant por um desalinhamento momentâneo banco/env; `onesignal_app_id`
+>   continua sendo gravado em toda inscrição e campanha, só não é usado como
+>   filtro nesta etapa.
+> - Histórico de campanhas grava e lista por `tenant_domain`.
+>
+> **Validação feita em produção, depois do deploy real (2026-07-04), sem enviar
+> nenhuma campanha real:**
+> - Contagem por tenant nos 6: `0` em todos (as 33 linhas legadas ficaram
+>   corretamente invisíveis).
+> - Pix Keno e SuperKeno: `0` inscritos, confirmado.
+> - Teste real de escrita: inscrição de teste (`onesignal_id` fictício) criada via
+>   `POST /api/push/subscribe` em Big Pix (`pwa.app-bigpix.com`) — gravou
+>   `tenant_domain = pwa.app-bigpix.com`, apareceu com contagem `1` só em Big Pix e
+>   `0` nos outros 5 tenants. Linha removida logo em seguida; total de
+>   `push_subscriptions` voltou a 33 (estado original).
+> - Simulação read-only do filtro de "enviar para todos" (`tenant_domain` +
+>   `permission_status = granted`): `0` destinatários elegíveis nos 6 — nenhum
+>   envio real foi disparado durante a validação.
+> - `push_campaigns` por tenant: `0` nos 6 (tabela ainda vazia).
+> - Service Worker, manifest e `NEXT_PUBLIC_ONESIGNAL_APP_ID`/App IDs: intocados —
+>   confirmado por `git diff` escopado antes de cada commit.
+>
+> Commit `fix: isolate push data by tenant` nos 6 repos; migration e rollback em
+> `supabase/migrations/004_add_tenant_isolation_to_push_tables.sql` /
+> `.rollback.sql`.
+>
+> **Pendências remanescentes, fora desta etapa:**
+> - WIP do banner de instalação (`components/pwa-install-flow.tsx`,
+>   `public/pwa-install/`) segue pausado, não commitado, nos 4 repos originais
+>   (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo) — ver
+>   `HANDOFF_PWA_INSTALL_FLOW.md`.
+> - `.env.vercel` solto (untracked) em `app-megabingo7`, fora do `.gitignore`
+>   atual (`.gitignore` só cobre `.env` e `.env*.local`) — precisa ser ignorado ou
+>   removido com cuidado antes que um `git add` amplo o inclua por acidente.
+> - 3 alterações soltas de logging em `app-premiosaovivo`
+>   (`app/api/settings/route.ts`, `lib/app-settings.server.ts`,
+>   `lib/logger/server.ts`), não commitadas, presentes só nesse repo — decisão
+>   pendente: replicar nos outros 5 ou descartar.
+
+(Texto original da auditoria, 2026-06-28, mantido como registro histórico:)
 
 Como o projeto atual é single-tenant por deploy, isso é aceitável por enquanto. Mas se no futuro virar multi-tenant real, as tabelas de push precisam obrigatoriamente ter isolamento.
 
