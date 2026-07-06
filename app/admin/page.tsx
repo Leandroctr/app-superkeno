@@ -5,6 +5,8 @@ import { clearAdminSession, isAdminAuthenticated } from "@/lib/admin-auth";
 import { appConfig } from "@/lib/app-config";
 import { getAppSettings } from "@/lib/app-settings.server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
+import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
+import { requireTenantAccess } from "@/lib/admin-identity.server";
 
 export const dynamic = "force-dynamic";
 
@@ -42,11 +44,33 @@ async function logout() {
   "use server";
 
   await clearAdminSession();
+
+  // Encerra tambem uma eventual sessao Supabase Auth (cookies sb-*). Sem
+  // isso, quem entrou pelo login real continuaria com acesso a /admin
+  // depois de clicar em "Sair", ja que o guard abaixo agora aceita essa
+  // sessao independentemente do cookie legado.
+  const sessionClient = await createSupabaseSessionClient();
+
+  if (sessionClient) {
+    await sessionClient.auth.signOut();
+  }
+
   redirect("/admin/login");
 }
 
 export default async function AdminPage() {
-  if (!(await isAdminAuthenticated())) {
+  // Guard real por tenant, com fallback legado mantido nesta fase:
+  // - currentAdmin: sessao Supabase Auth valida (super_admin sempre passa;
+  //   admin precisa de admin_tenant_access ativo para o tenant deste deploy).
+  // - hasLegacySession: cookie antigo admin_session, ainda aceito para nao
+  //   travar o acesso principal enquanto a migracao esta em andamento.
+  // Nao ha tela de gestao de administradores neste PWA — essa fica somente
+  // no app-big/BigPix (decisao arquitetural registrada em
+  // docs/ADMIN_AUTH_PLAN.md do app-big).
+  const currentAdmin = await requireTenantAccess();
+  const hasLegacySession = await isAdminAuthenticated();
+
+  if (!currentAdmin && !hasLegacySession) {
     redirect("/admin/login");
   }
 

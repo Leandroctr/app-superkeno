@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { appConfig } from "@/lib/app-config";
 import { createAdminSession, validateAdminCredentials } from "@/lib/admin-auth";
+import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
+import { logServerInfo, logServerWarn } from "@/lib/logger/server";
 
 type LoginPageProps = {
   searchParams: Promise<{
@@ -8,16 +10,51 @@ type LoginPageProps = {
   }>;
 };
 
+// Tenta autenticar via Supabase Auth (e-mail/senha). So prova a identidade
+// junto ao Supabase Auth — a checagem de papel/tenant (admin_users,
+// admin_tenant_access) e feita pelo guard de cada pagina/rota
+// (requireTenantAccess()), nao aqui.
+async function tryLoginWithSupabaseAuth(email: string, password: string) {
+  const supabase = await createSupabaseSessionClient();
+
+  if (!supabase) {
+    return false;
+  }
+
+  try {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return !error;
+  } catch (err) {
+    logServerWarn("admin_login_supabase_auth_error", {
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 async function login(formData: FormData) {
   "use server";
 
   const email = String(formData.get("email") || "");
   const password = String(formData.get("password") || "");
 
+  const supabaseOk = await tryLoginWithSupabaseAuth(email, password);
+
+  if (supabaseOk) {
+    // Sessao Supabase Auth criada (cookies sb-*). /admin e /admin/settings ja
+    // usam requireTenantAccess(), entao essa sessao real basta para entrar —
+    // nao precisa (nem deve) passar pelo cookie legado. Quem nao tiver linha
+    // em admin_users (ou nao tiver acesso a este tenant_domain) e barrado
+    // pelo proprio guard de /admin, nao aqui.
+    logServerInfo("admin_login_supabase_auth_ok", { email });
+    redirect("/admin");
+  }
+
   if (!validateAdminCredentials(email, password)) {
     redirect("/admin/login?error=1");
   }
 
+  logServerWarn("admin_login_legacy_fallback_used", { email });
   await createAdminSession();
   redirect("/admin");
 }
