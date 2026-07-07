@@ -11,23 +11,22 @@ function isValidPlatformUrl(url: string) {
   return Boolean(url.trim()) && url.trim() !== "#";
 }
 
-function prepareHtml(html: string, platformUrl: string, redirectDelayMs: number): string {
+function prepareHtml(html: string): string {
   const W = 1080;
   const H = 1920;
 
   // Remove any existing viewport meta so ours is the only one
   const cleaned = html.replace(/<meta[^>]+name=["']viewport["'][^>]*\/?>/gi, "");
 
-  const redirectJs = platformUrl
-    ? `window.setTimeout(function(){window.top.location.assign(${JSON.stringify(platformUrl)});},${redirectDelayMs});`
-    : "";
-
+  // A splash customizada e somente visual — nao se auto-redireciona mais.
+  // O redirect para platformUrl e sempre decidido pelo componente pai (React),
+  // que consegue esperar a sincronizacao da inscricao push antes de navegar.
   const inject = `<meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 html{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden;}
 body{margin:0;padding:0;width:${W}px;height:${H}px;overflow:hidden;transform-origin:0 0;opacity:0;}
 </style>
-<script>(function(){function s(){var w=window.innerWidth,h=window.innerHeight,f=Math.max(w/${W},h/${H}),tx=(w-${W}*f)/2,ty=(h-${H}*f)/2;document.body.style.transform='translateX('+tx+'px) translateY('+ty+'px) scale('+f+')';document.body.style.opacity='1';}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',s);}else{s();}window.addEventListener('resize',s);${redirectJs}})()</script>`;
+<script>(function(){function s(){var w=window.innerWidth,h=window.innerHeight,f=Math.max(w/${W},h/${H}),tx=(w-${W}*f)/2,ty=(h-${H}*f)/2;document.body.style.transform='translateX('+tx+'px) translateY('+ty+'px) scale('+f+')';document.body.style.opacity='1';}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',s);}else{s();}window.addEventListener('resize',s);})()</script>`;
 
   if (/<head[^>]*>/i.test(cleaned)) {
     return cleaned.replace(/<head([^>]*)>/i, (_, attrs: string) => `<head${attrs}>\n${inject}`);
@@ -109,6 +108,22 @@ export default function Home() {
     let isActive = true;
     let validationTimer: number | undefined;
     let redirectTimer: number | undefined;
+    let hasRedirected = false;
+    let pushSyncListener: ((event: Event) => void) | undefined;
+
+    // Ponto unico de redirect para platformUrl. Chamado tanto pelo evento
+    // push-sync-settled (disparado por OneSignalInitializer assim que a
+    // tentativa de sincronizar a inscricao push termina, com sucesso ou
+    // falha) quanto pelo timer de seguranca (redirectDelayMs) — o que vier
+    // primeiro. Guard hasRedirected evita disparo duplo.
+    function redirectToPlatform(url: string, reason: string) {
+      if (hasRedirected) {
+        return;
+      }
+      hasRedirected = true;
+      console.log(`[SPLASH] Redirecionando para a plataforma (motivo: ${reason}).`);
+      window.location.assign(url);
+    }
 
     async function loadSettings() {
       let loadedSettings = getClientFallbackSettings();
@@ -141,12 +156,7 @@ export default function Home() {
           }
           const html = await htmlResponse.text();
           if (isActive) {
-            const pUrl = loadedSettings.platformUrl.trim();
-            setSplashHtml(prepareHtml(
-              html,
-              isValidPlatformUrl(pUrl) ? pUrl : "",
-              loadedSettings.redirectDelayMs,
-            ));
+            setSplashHtml(prepareHtml(html));
             console.log("[SPLASH] HTML carregado, tamanho:", html.length, "chars");
           }
         } catch (err) {
@@ -170,9 +180,21 @@ export default function Home() {
         });
       }, 0);
 
-      if (isValid && !loadedSettings.splashHtmlUrl) {
+      if (isValid) {
+        // Ouve o sinal do OneSignalInitializer (sucesso OU falha de sync) e
+        // redireciona assim que ele chegar — sem esperar o timeout inteiro
+        // se a sincronizacao terminar antes. O timer abaixo e so a rede de
+        // seguranca: garante que o usuario nunca fique preso na splash,
+        // usando o mesmo redirectDelayMs ja configurado para este tenant
+        // (nao aumenta o tempo de espera de hoje).
+        pushSyncListener = (event: Event) => {
+          const ok = Boolean((event as CustomEvent<{ ok?: boolean }>).detail?.ok);
+          redirectToPlatform(platformUrl, ok ? "push sync confirmado" : "push sync falhou");
+        };
+        window.addEventListener("push-sync-settled", pushSyncListener, { once: true });
+
         redirectTimer = window.setTimeout(() => {
-          window.location.assign(platformUrl);
+          redirectToPlatform(platformUrl, "timeout de seguranca");
         }, loadedSettings.redirectDelayMs);
       }
     }
@@ -183,6 +205,9 @@ export default function Home() {
       isActive = false;
       window.clearTimeout(validationTimer);
       window.clearTimeout(redirectTimer);
+      if (pushSyncListener) {
+        window.removeEventListener("push-sync-settled", pushSyncListener);
+      }
     };
   }, []);
 

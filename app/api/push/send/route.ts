@@ -168,6 +168,7 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       app_id: settings.oneSignalAppId,
+      target_channel: "push",
       include_subscription_ids: subscriptionIds,
       headings: { en: data.title, pt: data.title },
       contents: { en: data.message, pt: data.message },
