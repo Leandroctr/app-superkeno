@@ -304,7 +304,8 @@ lib/diagnostics/
 └── index.ts    ← getDiagnostics(): Promise<DiagnosticsResult>
 ```
 
-**Método da rota:** GET, protegido por `isAdminAuthenticated()`  
+**Método da rota:** GET, protegido por `requireTenantAccess()`
+
 **Retorna (somente leitura):**
 - `source` das settings (`database` ou `env`)
 - `appName`, `publicUrl`

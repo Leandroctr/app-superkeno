@@ -365,9 +365,16 @@ persistir ou registrar identificadores em texto claro.
 | `admin_login_rate_limit_unavailable` | warn | `tenantDomain` | e-mail, IP, senha, hash HMAC | Sinalizar login bloqueado por falha da proteção |
 | `admin_login_rate_limited` | warn | `tenantDomain`, `scope`, `retryAfterSeconds` | e-mail, IP, senha, hash HMAC | Diagnosticar excesso sem expor o identificador |
 | `admin_login_supabase_auth_ok` | info | `tenantDomain` | e-mail, senha, tokens | Registrar sucesso no fluxo Supabase sem PII |
-| `admin_login_legacy_fallback_used` | warn | `tenantDomain` | e-mail, senha, cookie | Manter rastreabilidade do fallback legado sem PII |
+| `admin_login_authorization_denied` | warn | `tenantDomain` | e-mail, senha, tokens, role, identificador | Registrar identidade Auth valida sem role/acesso ao tenant, sem revelar qual regra falhou |
+| `admin_login_supabase_auth_error` | warn | `errorMessage` | e-mail, senha, tokens | Diagnosticar indisponibilidade do Auth sem registrar credenciais |
 
-### 7.3 app/api/push/subscribe/route.ts
+### 7.3 app/api/admin/logout/route.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `admin_logout_remote_error` | warn | `errorMessage` | cookies, access token, refresh token, e-mail | Registrar falha de revogação remota antes da limpeza local de fallback |
+
+### 7.4 app/api/push/subscribe/route.ts
 
 | Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
 |---|---|---|---|---|

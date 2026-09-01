@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { appSettingsToRow, extractHostname, settingsRowToAppSettings } from "@/lib/app-settings";
-import { isAdminAuthenticated } from "@/lib/admin-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { appConfig } from "@/lib/app-config";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
@@ -10,13 +9,8 @@ import {
 } from "@/lib/admin-settings-payload";
 
 export async function POST(request: Request) {
-  // Mesmo padrao de guard adotado em /admin e /admin/settings: sessao
-  // Supabase real (checada por tenant) OU cookie legado, qualquer um dos
-  // dois libera o acesso nesta fase de transicao.
   const currentAdmin = await requireTenantAccess();
-  const hasLegacySession = await isAdminAuthenticated();
-
-  if (!currentAdmin && !hasLegacySession) {
+  if (!currentAdmin) {
     return NextResponse.json(
       { ok: false, error: "Nao autenticado." },
       { status: 401 },

@@ -1,15 +1,15 @@
-import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { appConfig } from "@/lib/app-config";
+import { getAuthorizedAdminForTenant } from "@/lib/admin-identity.server";
 import { extractHostname } from "@/lib/app-settings";
-import { createAdminSession, validateAdminCredentials } from "@/lib/admin-auth";
-import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
 import { logServerInfo, logServerWarn } from "@/lib/logger/server";
 import { consumeRateLimits, resetRateLimit } from "@/lib/rate-limit.server";
 import {
   extractClientIp,
   normalizeAccountIdentifier,
 } from "@/lib/request-security";
+import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
 
 type LoginPageProps = {
   searchParams: Promise<{
@@ -17,11 +17,11 @@ type LoginPageProps = {
   }>;
 };
 
-// Tenta autenticar via Supabase Auth (e-mail/senha). So prova a identidade
-// junto ao Supabase Auth — a checagem de papel/tenant (admin_users,
-// admin_tenant_access) e feita pelo guard de cada pagina/rota
-// (requireTenantAccess()), nao aqui.
-async function tryLoginWithSupabaseAuth(email: string, password: string) {
+async function tryLoginWithSupabaseAuth(
+  email: string,
+  password: string,
+  tenantDomain: string,
+) {
   const supabase = await createSupabaseSessionClient();
 
   if (!supabase) {
@@ -29,8 +29,21 @@ async function tryLoginWithSupabaseAuth(email: string, password: string) {
   }
 
   try {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return !error;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error || !data.user) {
+      return false;
+    }
+
+    const admin = await getAuthorizedAdminForTenant(data.user.id, tenantDomain);
+
+    if (!admin) {
+      await supabase.auth.signOut({ scope: "local" });
+      logServerWarn("admin_login_authorization_denied", { tenantDomain });
+      return false;
+    }
+
+    return true;
   } catch (err) {
     logServerWarn("admin_login_supabase_auth_error", {
       errorMessage: err instanceof Error ? err.message : String(err),
@@ -78,26 +91,18 @@ async function login(formData: FormData) {
     redirect("/admin/login?error=rate_limited");
   }
 
-  const supabaseOk = await tryLoginWithSupabaseAuth(email, password);
+  const authenticated = await tryLoginWithSupabaseAuth(
+    email,
+    password,
+    tenantDomain,
+  );
 
-  if (supabaseOk) {
-    // Sessao Supabase Auth criada (cookies sb-*). /admin e /admin/settings ja
-    // usam requireTenantAccess(), entao essa sessao real basta para entrar —
-    // nao precisa (nem deve) passar pelo cookie legado. Quem nao tiver linha
-    // em admin_users (ou nao tiver acesso a este tenant_domain) e barrado
-    // pelo proprio guard de /admin, nao aqui.
-    await resetRateLimit("admin_login_account", accountIdentifier);
-    logServerInfo("admin_login_supabase_auth_ok", { tenantDomain });
-    redirect("/admin");
-  }
-
-  if (!validateAdminCredentials(email, password)) {
+  if (!authenticated) {
     redirect("/admin/login?error=1");
   }
 
   await resetRateLimit("admin_login_account", accountIdentifier);
-  logServerWarn("admin_login_legacy_fallback_used", { tenantDomain });
-  await createAdminSession();
+  logServerInfo("admin_login_supabase_auth_ok", { tenantDomain });
   redirect("/admin");
 }
 

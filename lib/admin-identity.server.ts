@@ -7,16 +7,8 @@ import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { logServerError, logServerWarn } from "@/lib/logger/server";
 
-// Helpers de identidade/autorizacao para o painel admin real (Supabase Auth).
-// Ainda NAO conectados a nenhuma pagina/rota existente — preparados para a
-// proxima etapa de implementacao. Ate la, /admin/* e /api/admin/* continuam
-// usando isAdminAuthenticated() (lib/admin-auth.ts) como hoje.
-//
-// Convencao adotada, igual a isAdminAuthenticated(): estes helpers retornam
-// null quando nao autorizado, em vez de fazer redirect() ou responder
-// NextResponse diretamente. Cada pagina decide redirect(); cada rota de API
-// decide o status HTTP (401/403) — mesma divisao de responsabilidade que
-// o codigo atual ja usa.
+// Fonte unica de identidade/autorizacao administrativa:
+// Supabase Auth -> admin_users -> admin_tenant_access.
 
 export type AdminRole = "super_admin" | "admin";
 
@@ -34,24 +26,17 @@ type AdminUserRow = {
   auth_user_id: string;
   email: string;
   name: string | null;
-  role: AdminRole;
+  role: unknown;
   active: boolean;
 };
 
-export const getCurrentAdmin = cache(async function getCurrentAdmin(): Promise<CurrentAdmin | null> {
-  const sessionClient = await createSupabaseSessionClient();
+function isAdminRole(value: unknown): value is AdminRole {
+  return value === "super_admin" || value === "admin";
+}
 
-  if (!sessionClient) {
-    logServerWarn("admin_identity_skip", { reason: "supabase_session_not_configured" });
-    return null;
-  }
-
-  const { data: userData, error: userError } = await sessionClient.auth.getUser();
-
-  if (userError || !userData.user) {
-    return null;
-  }
-
+async function findActiveAdminByAuthUserId(
+  authUserId: string,
+): Promise<CurrentAdmin | null> {
   const adminClient = createSupabaseAdminClient();
 
   if (!adminClient) {
@@ -62,17 +47,15 @@ export const getCurrentAdmin = cache(async function getCurrentAdmin(): Promise<C
   const { data, error } = await adminClient
     .from("admin_users")
     .select("id, auth_user_id, email, name, role, active")
-    .eq("auth_user_id", userData.user.id)
+    .eq("auth_user_id", authUserId)
     .maybeSingle<AdminUserRow>();
 
   if (error) {
-    logServerError("admin_identity_lookup_error", error, {
-      authUserId: userData.user.id,
-    });
+    logServerError("admin_identity_lookup_error", error, { authUserId });
     return null;
   }
 
-  if (!data || !data.active) {
+  if (!data || !data.active || !isAdminRole(data.role)) {
     return null;
   }
 
@@ -84,6 +67,68 @@ export const getCurrentAdmin = cache(async function getCurrentAdmin(): Promise<C
     role: data.role,
     active: data.active,
   };
+}
+
+async function hasTenantAccess(admin: CurrentAdmin, tenantDomain: string) {
+  if (admin.role === "super_admin") {
+    return true;
+  }
+
+  const adminClient = createSupabaseAdminClient();
+
+  if (!adminClient) {
+    return false;
+  }
+
+  const { data, error } = await adminClient
+    .from("admin_tenant_access")
+    .select("id")
+    .eq("admin_user_id", admin.id)
+    .eq("tenant_domain", tenantDomain)
+    .eq("active", true)
+    .maybeSingle();
+
+  if (error) {
+    logServerError("admin_tenant_access_lookup_error", error, {
+      adminId: admin.id,
+      tenantDomain,
+    });
+    return false;
+  }
+
+  return Boolean(data);
+}
+
+export async function getAuthorizedAdminForTenant(
+  authUserId: string,
+  tenantDomain: string,
+): Promise<CurrentAdmin | null> {
+  const admin = await findActiveAdminByAuthUserId(authUserId);
+
+  if (!admin || !(await hasTenantAccess(admin, tenantDomain))) {
+    return null;
+  }
+
+  return admin;
+}
+
+export const getCurrentAdmin = cache(async function getCurrentAdmin(): Promise<CurrentAdmin | null> {
+  const sessionClient = await createSupabaseSessionClient();
+
+  if (!sessionClient) {
+    logServerWarn("admin_identity_skip", { reason: "supabase_session_not_configured" });
+    return null;
+  }
+
+  // getUser() contacts Supabase Auth on every guard evaluation. A cookie or
+  // getSession() payload alone is never trusted as administrative identity.
+  const { data: userData, error: userError } = await sessionClient.auth.getUser();
+
+  if (userError || !userData.user) {
+    return null;
+  }
+
+  return findActiveAdminByAuthUserId(userData.user.id);
 });
 
 export async function requireSuperAdmin(): Promise<CurrentAdmin | null> {
@@ -103,33 +148,6 @@ export async function requireTenantAccess(): Promise<CurrentAdmin | null> {
     return null;
   }
 
-  if (admin.role === "super_admin") {
-    return admin;
-  }
-
-  const adminClient = createSupabaseAdminClient();
-
-  if (!adminClient) {
-    return null;
-  }
-
   const tenantDomain = extractHostname(appConfig.publicUrl);
-
-  const { data, error } = await adminClient
-    .from("admin_tenant_access")
-    .select("id")
-    .eq("admin_user_id", admin.id)
-    .eq("tenant_domain", tenantDomain)
-    .eq("active", true)
-    .maybeSingle();
-
-  if (error) {
-    logServerError("admin_tenant_access_lookup_error", error, {
-      adminId: admin.id,
-      tenantDomain,
-    });
-    return null;
-  }
-
-  return data ? admin : null;
+  return (await hasTenantAccess(admin, tenantDomain)) ? admin : null;
 }

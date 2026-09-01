@@ -47,6 +47,8 @@ Implementado:
 - API `/api/push/send` para envio server-side via OneSignal.
 - Painel admin MVP em `/admin`.
 - Login admin MVP em `/admin/login`.
+- Supabase Auth como identidade administrativa, com roles em `admin_users` e
+  acesso por tenant em `admin_tenant_access`.
 - Painel white-label em `/admin/settings`.
 - API publica `/api/settings` para leitura da configuracao ativa.
 - API admin `/api/admin/settings` para salvar identidade e comportamento do PWA.
@@ -56,7 +58,6 @@ Implementado:
 
 Ainda nao implementado:
 
-- Supabase Auth.
 - Segmentacao avancada.
 - CRM.
 - Campanhas automaticas.
@@ -89,9 +90,6 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 NEXT_PUBLIC_ONESIGNAL_APP_ID=
 ONESIGNAL_REST_API_KEY=
-
-ADMIN_EMAIL=
-ADMIN_PASSWORD=
 ```
 
 ## White-label
@@ -153,13 +151,14 @@ ativo; em caso de falha, o fallback por `.env` mantem o PWA funcionando.
 Para criar uma nova marca:
 
 1. Configure dominio, DNS e deploy da nova marca.
-2. Preencha as variaveis minimas de ambiente na Vercel para Supabase, admin e
+2. Preencha as variaveis minimas de ambiente na Vercel para Supabase e
    integracoes externas.
-3. Rode `supabase/schema.sql` no projeto Supabase.
-4. Acesse `/admin/login`.
-5. Abra `/admin/settings`.
-6. Ajuste nome, URLs, cores, logo, favicon, icones, splash e notificacoes.
-7. Teste `/manifest.webmanifest`, instalacao do PWA e redirecionamento.
+3. Garanta uma identidade no Supabase Auth com linha ativa em `admin_users`.
+4. Para role `admin`, conceda o tenant em `admin_tenant_access`.
+5. Rode `supabase/schema.sql` no projeto Supabase quando aplicavel.
+6. Acesse `/admin/login` e abra `/admin/settings`.
+7. Ajuste nome, URLs, cores, logo, favicon, icones, splash e notificacoes.
+8. Teste `/manifest.webmanifest`, instalacao do PWA e redirecionamento.
 
 Ainda dependem de configuracao externa:
 
@@ -237,12 +236,12 @@ O envio real passa por `/api/push/send`.
 
 ## Como testar push
 
-1. Preencha `.env.local` com Supabase, OneSignal e credenciais admin.
+1. Preencha `.env.local` com Supabase e OneSignal.
 2. Rode `npm run dev`.
 3. Abra o PWA e, se necessario, expanda a opcao discreta de notificacoes.
 4. Confirme no Supabase se uma linha entrou em `push_subscriptions`.
 5. Acesse `/admin/login`.
-6. Entre com `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
+6. Entre com uma conta Supabase Auth ativa e autorizada para o tenant.
 7. Em `/admin`, envie um teste ou envie para todos.
 8. Confira o registro em `push_campaigns`.
 
@@ -269,12 +268,12 @@ Antes de publicar:
 
 Veja o passo a passo completo em `DEPLOY_CHECKLIST.md`.
 
-## Admin MVP
+## Administracao
 
-O painel usa autenticacao simples por variaveis:
-
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
-
-Isso e intencional para o MVP. Nao ha Supabase Auth, segmentacao, CRM ou
-autenticacao complexa nesta etapa.
+Supabase Auth e a unica fonte de identidade administrativa. A tabela
+`admin_users` define as roles `super_admin` e `admin`; `admin_tenant_access`
+define os tenants permitidos para cada `admin`. `super_admin` segue a regra
+global existente. Usuarios Auth sem linha ativa em `admin_users` nao entram no
+painel. `ADMIN_EMAIL`, `ADMIN_PASSWORD` e a antiga cookie `admin_session` nao
+sao mecanismos de autenticacao e podem ser removidos dos ambientes Vercel
+depois que esta versao for implantada e validada.

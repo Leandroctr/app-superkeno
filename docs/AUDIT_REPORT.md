@@ -615,3 +615,82 @@ PostCSS e Sharp corrigidos, não porque `16.2.11` permaneça afetado pelo adviso
 de Server Actions tratado aqui. A adoção de `16.3.4` deve ser avaliada em etapa
 separada, por ser avanço de minor, sem override automático nesta remediação.
 
+---
+
+## 12. Remediação A-1/A-3 — autenticação administrativa — 2026-08-31
+
+Esta etapa foi executada com os deployments Vercel desconectados e sem deploy.
+O inventário somente leitura do projeto Supabase PWA-WL encontrou 2 usuários em
+`auth.users`, ambos confirmados e não bloqueados; 2 linhas ativas e consistentes
+em `admin_users`; e 6 grants ativos em `admin_tenant_access`. Não existem linhas
+órfãs, divergências de e-mail/`auth_user_id` nem admins comuns sem tenant.
+
+As roles existentes são `super_admin` e `admin`. Há um `super_admin` ativo,
+confirmado e com login Supabase anterior bem-sucedido; pela regra global
+existente, ele cobre todos os tenants. O `admin` ativo possui grants explícitos
+para BigPix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo, Pix Keno e SuperKeno. O
+tenant histórico `pwa.bingonacional.com` não possui grant explícito desse admin,
+mas continua coberto pelo `super_admin`. Nenhum tenant ficou sem administrador.
+
+### A-1 — sessão legacy
+
+**Resolvido tecnicamente.** `lib/admin-auth.ts` foi removido. O código não lê
+`ADMIN_EMAIL` nem `ADMIN_PASSWORD`, não calcula mais SHA-256 de
+`email:password`, não cria a cookie `admin_session` e não aceita seu valor como
+identidade. O proxy apenas expira uma eventual cookie antiga com `Max-Age=0`.
+
+A sessão administrativa é exclusivamente a sessão Supabase Auth em cookies
+gerenciadas por `@supabase/ssr`. Para este app, que não usa cliente Auth no
+browser, elas são `HttpOnly`, `SameSite=Lax`, `Secure` em produção e `Path=/`.
+O access token possui expiração emitida pelo Auth; `proxy.ts` renova a sessão e
+persiste tokens/cabeçalhos `no-store` antes das rotas protegidas. Os guards usam
+`auth.getUser()`, e nunca `getSession()`, para revalidar a identidade no Auth
+server em cada request.
+
+Logout passou a ser `POST /api/admin/logout`: executa `signOut` global para
+revogar refresh tokens e, se a revogação remota falhar, remove ao menos a sessão
+local. O teste real confirmou cookies removidas, refresh token revogado, sessão
+expirada/inválida bloqueada e usuário Auth bloqueado sem acesso.
+
+### A-3 — autorização por role e tenant
+
+**Resolvido tecnicamente.** Supabase Auth autentica a identidade;
+`admin_users` precisa conter a identidade ativa e uma role reconhecida;
+`admin_tenant_access` precisa conter grant ativo para o tenant server-side
+quando a role é `admin`. `super_admin` mantém acesso global conforme a regra já
+existente. Usuário Auth sem `admin_users`, admin inativo, usuário removido ou
+bloqueado e admin sem grant são negados.
+
+Os cinco guards CETEC — `/admin`, `/admin/settings`,
+`/api/admin/settings`, `/api/admin/upload` e `/api/push/send` — dependem somente
+de `requireTenantAccess()`. Não existe mais expressão
+`currentAdmin || legacySession`. A seleção do tenant continua derivada
+exclusivamente de `NEXT_PUBLIC_PUBLIC_URL` no servidor; payload do cliente não
+pode trocar o tenant. Este PWA não possui interface/rota de gestão de admins;
+`requireSuperAdmin()` permanece disponível para uma futura função global, e a
+role `admin` não satisfaz esse guard.
+
+### Banco e testes
+
+Nenhuma migration foi necessária e nenhuma definição ou policy foi alterada.
+Testes reais com identidades temporárias confirmaram que `authenticated` não
+consegue elevar a própria role nem inserir grants em
+`admin_tenant_access`. A matriz A-1/A-3 passou 16/16: os 15 cenários obrigatórios
+mais logout/revogação. Ela cobriu super_admin, admin autorizado e não autorizado,
+usuário Auth sem perfil admin, ausência de sessão, sessão expirada/inválida,
+usuário bloqueado, variáveis/cookie legacy e os cinco guards.
+
+Todas as identidades e linhas temporárias foram removidas no teardown. O
+pós-check retornou exatamente ao inventário inicial: 2 usuários Auth,
+2 `admin_users`, 6 `admin_tenant_access` e zero artefatos temporários. Nenhuma
+conta administrativa existente foi modificada.
+
+`ADMIN_EMAIL` e `ADMIN_PASSWORD` foram removidas de `.env.example` e da
+documentação operacional. Elas permanecem obsoletas nos ambientes Vercel e
+podem ser apagadas futuramente, depois do deploy e da validação operacional
+desta versão; nenhuma variável Vercel foi removida nesta etapa.
+
+Permanecem fora deste escopo: A-5 estrutural de `onesignal_id`, nonce/hash da
+CSP, vulnerabilidades npm remanescentes, hardening de uploads,
+`admin_audit_log` completo e demais P3/P4.
+

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import type { AppSettings } from "@/lib/app-settings";
 import { getAppSettings } from "@/lib/app-settings.server";
-import { isAdminAuthenticated } from "@/lib/admin-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
@@ -45,15 +44,8 @@ function maskAppId(appId: string): string {
 }
 
 export async function POST(request: Request) {
-  // Mesmo padrao de guard adotado em /admin, /admin/settings,
-  // /api/admin/settings e /api/admin/upload: sessao Supabase real
-  // (checada por tenant) OU cookie legado, qualquer um dos dois libera o
-  // acesso nesta fase de transicao. Roda antes de qualquer configuracao,
-  // consulta a push_subscriptions ou chamada ao OneSignal abaixo.
   const currentAdmin = await requireTenantAccess();
-  const hasLegacySession = await isAdminAuthenticated();
-
-  if (!currentAdmin && !hasLegacySession) {
+  if (!currentAdmin) {
     return NextResponse.json(
       { ok: false, error: "Nao autenticado." },
       { status: 401 },

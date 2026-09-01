@@ -63,8 +63,6 @@ Variáveis críticas:
 - `NEXT_PUBLIC_BACKGROUND_COLOR`
 - `NEXT_PUBLIC_ONESIGNAL_APP_ID`
 - `ONESIGNAL_REST_API_KEY`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
@@ -91,6 +89,9 @@ Checklist:
 - confirmar bucket `app-assets`;
 - confirmar policies;
 - confirmar `app_settings`;
+- confirmar usuario no Supabase Auth;
+- confirmar role ativa em `admin_users`;
+- para role `admin`, confirmar o tenant em `admin_tenant_access`;
 - validar settings pelo painel admin;
 - testar upload de logo;
 - testar upload de favicon;
@@ -123,7 +124,7 @@ Checklist:
 Checklist:
 
 - acessar `/admin/login`;
-- logar com credenciais;
+- logar com a conta Supabase Auth autorizada para o tenant;
 - atualizar identidade visual;
 - atualizar URLs;
 - salvar settings;
