@@ -63,7 +63,7 @@ const assetConfigs: AssetConfig[] = [
     kind: "favicon",
     title: "Favicon",
     buttonLabel: "Enviar favicon",
-    recommendation: "Formato recomendado: ICO ou PNG",
+    recommendation: "Formatos aceitos: PNG, JPEG ou WEBP",
     ideal: "Tamanho ideal: 32x32 px",
     idealKb: 50,
     maxKb: 100,
@@ -245,8 +245,6 @@ export function AdminSettingsForm({ initialSettings }: AdminSettingsFormProps) {
     message: "",
   });
   const inputRefs = useRef<Partial<Record<AssetKey, HTMLInputElement | null>>>({});
-  const [htmlSplashMeta, setHtmlSplashMeta] = useState<{ fileName: string; sizeKb: number } | null>(null);
-  const [uploadingHtml, setUploadingHtml] = useState(false);
 
   const appInitial =
     settings.appShortName.trim().charAt(0).toUpperCase() ||
@@ -349,51 +347,8 @@ export function AdminSettingsForm({ initialSettings }: AdminSettingsFormProps) {
     });
   }
 
-  async function uploadHtmlSplash(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    console.log("[HTML SPLASH] Iniciando upload:", file.name, file.size, "bytes");
-    setUploadingHtml(true);
-    setStatus({ type: "loading", message: "Enviando splash HTML..." });
-
-    const formData = new FormData();
-    formData.append("kind", "splashHtml");
-    formData.append("file", file);
-
-    const response = await fetch("/api/admin/upload", {
-      method: "POST",
-      body: formData,
-    });
-    const result = await response.json().catch(() => null);
-
-    console.log("[HTML SPLASH] Resposta upload:", result);
-    setUploadingHtml(false);
-
-    if (!response.ok || !result?.ok) {
-      setStatus({
-        type: "error",
-        message: result?.error || "Nao foi possivel enviar o arquivo HTML.",
-      });
-      return;
-    }
-
-    updateField("splashHtmlUrl", result.url);
-    setHtmlSplashMeta({
-      fileName: file.name,
-      sizeKb: Math.max(1, Math.round(file.size / 1024)),
-    });
-    setStatus({ type: "success", message: "Splash HTML enviada com sucesso." });
-    event.target.value = "";
-  }
-
   function removeHtmlSplash() {
-    console.log("[HTML SPLASH] Removendo splash HTML");
     updateField("splashHtmlUrl", "");
-    setHtmlSplashMeta(null);
   }
 
   async function saveSettings() {
@@ -604,7 +559,7 @@ export function AdminSettingsForm({ initialSettings }: AdminSettingsFormProps) {
 
                   <div className="flex flex-wrap gap-2">
                     <input
-                      accept=".png,.jpg,.jpeg,.webp,.svg,.ico,image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon"
+                      accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
                       className="hidden"
                       onChange={(event) => uploadAsset(config, event)}
                       ref={(element) => {
@@ -653,21 +608,17 @@ export function AdminSettingsForm({ initialSettings }: AdminSettingsFormProps) {
               <div>
                 <h3 className="text-base font-black">Splash Animada (HTML)</h3>
                 <p className="mt-1 text-sm leading-6 text-slate-500">
-                  Substitui a splash estatica por uma animacao em HTML. Maximo: 500 KB.
-                  Se configurada, tem prioridade sobre a imagem de splash.
+                  Novos uploads HTML foram desativados por seguranca. Uma splash
+                  legada ja configurada continua ativa ate ser removida; para novas
+                  configuracoes, use a imagem de splash.
                 </p>
               </div>
 
               {settings.splashHtmlUrl ? (
                 <div className="rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-700">
                   <p className="font-semibold text-slate-900">
-                    Arquivo: {htmlSplashMeta?.fileName ?? "splash.html"}
+                    Arquivo HTML legado configurado
                   </p>
-                  {htmlSplashMeta ? (
-                    <p>Tamanho: {htmlSplashMeta.sizeKb} KB</p>
-                  ) : (
-                    <p>Arquivo configurado</p>
-                  )}
                   <p className="mt-1 font-semibold text-emerald-700">Ativa — tem prioridade sobre a imagem</p>
                 </div>
               ) : (
@@ -677,26 +628,6 @@ export function AdminSettingsForm({ initialSettings }: AdminSettingsFormProps) {
               )}
 
               <div className="flex flex-wrap gap-2">
-                <input
-                  accept=".html,text/html"
-                  className="hidden"
-                  onChange={uploadHtmlSplash}
-                  ref={(el) => { inputRefs.current.splashHtmlUrl = el; }}
-                  type="file"
-                />
-                <button
-                  className="min-h-10 rounded-lg px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-70"
-                  disabled={uploadingHtml}
-                  onClick={() => inputRefs.current.splashHtmlUrl?.click()}
-                  style={{ backgroundColor: settings.themeColor || "#101828" }}
-                  type="button"
-                >
-                  {uploadingHtml
-                    ? "Enviando..."
-                    : settings.splashHtmlUrl
-                      ? "Substituir HTML"
-                      : "Enviar splash HTML"}
-                </button>
                 {settings.splashHtmlUrl ? (
                   <button
                     className="min-h-10 rounded-lg border border-slate-200 px-4 text-sm font-bold text-slate-700"

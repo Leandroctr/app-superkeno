@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
+import sharp from "sharp";
 
 const runRealTests = process.env.RUN_REAL_ADMIN_AUTH_TESTS === "1";
 
@@ -33,6 +34,7 @@ if (!runRealTests) {
   const password = `C3tec!${randomBytes(24).toString("base64url")}`;
   const createdAuthUserIds = [];
   const createdAdminUserIds = [];
+  const createdStoragePaths = [];
   const identities = {};
   const sessions = {};
 
@@ -192,6 +194,13 @@ if (!runRealTests) {
   });
 
   after(async () => {
+    if (createdStoragePaths.length > 0) {
+      const { error } = await adminClient.storage
+        .from("app-assets")
+        .remove(createdStoragePaths);
+      assert.ifError(error);
+    }
+
     if (createdAdminUserIds.length > 0) {
       await adminClient
         .from("admin_tenant_access")
@@ -243,6 +252,54 @@ if (!runRealTests) {
       assert.equal(push.status, 503);
     });
 
+    test("3b. authorized upload writes only the validated PNG path and is publicly readable", async () => {
+      const png = await sharp({
+        create: {
+          width: 16,
+          height: 16,
+          channels: 4,
+          background: { r: 15, g: 90, b: 180, alpha: 1 },
+        },
+      })
+        .png()
+        .toBuffer();
+      const formData = new FormData();
+      formData.append("kind", "logo");
+      formData.append(
+        "file",
+        new Blob([png], { type: "image/png" }),
+        "cetec-upload-test.png",
+      );
+
+      const response = await appRequest(
+        "/api/admin/upload",
+        { method: "POST", body: formData },
+        sessions.super.jar,
+      );
+      const result = await response.json();
+
+      if (result?.path) {
+        createdStoragePaths.push(result.path);
+      }
+
+      assert.equal(response.status, 200, JSON.stringify(result));
+      assert.equal(result.ok, true);
+      assert.match(
+        result.path,
+        /^logo\/\d+-[0-9a-f-]{36}-cetec-upload-test\.png$/,
+      );
+      assert.match(result.url, /\/storage\/v1\/object\/public\/app-assets\/logo\//);
+
+      const publicResponse = await fetch(result.url);
+      const publicBytes = new Uint8Array(await publicResponse.arrayBuffer());
+      assert.equal(publicResponse.status, 200);
+      assert.equal(publicResponse.headers.get("content-type"), "image/png");
+      assert.deepEqual(
+        [...publicBytes.subarray(0, 8)],
+        [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      );
+    });
+
     test("4. admin authenticates with Supabase Auth", () => {
       assert.ok(sessions.allowed.session?.access_token);
     });
@@ -267,7 +324,10 @@ if (!runRealTests) {
       const route = readFileSync("app/api/admin/settings/route.ts", "utf8");
       const payload = readFileSync("lib/admin-settings-payload.ts", "utf8");
       assert.match(route, /extractHostname\(appConfig\.publicUrl\)/);
-      assert.match(route, /resolveTenantSettings\(payload, hostname\)/);
+      assert.match(
+        route,
+        /resolveTenantSettings\(\s*\{\s*\.\.\.payload,\s*splashHtmlUrl\s*\},\s*hostname,\s*\)/s,
+      );
       assert.doesNotMatch(payload, /tenantDomain:\s*payload\.tenantDomain/);
     });
 

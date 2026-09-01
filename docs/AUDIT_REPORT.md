@@ -807,3 +807,114 @@ criptográfica absoluta de posse do `onesignal_id` continua não oferecida pelo
 modelo do OneSignal e permanece registrada como risco residual; por isso A-5
 não é declarado integralmente encerrado.
 
+---
+
+## 14. Remediação de uploads A-4, M-3, M-4 e M-6 — 2026-09-01
+
+Este bloco foi propagado semanticamente para o worktree SuperKeno de segurança,
+a partir do HEAD `c37435a5284c55f81150425710676546a7d66886`. Não houve migration,
+DDL, alteração de configuração do bucket, push ou deploy. As suítes reais criaram
+somente identidades, grants, subscriptions, chaves de rate limit e um objeto
+PNG sintéticos; todos foram removidos pelos respectivos teardowns.
+
+### Inventário real dos seis tenants
+
+O inventário leu `app_settings` e baixou os assets públicos configurados para
+conferir assinatura e `Content-Type`, sem alterar dados. Os cinco campos de
+imagem de cada tenant (`logo`, `icon192`, `icon512`, `favicon` e `splash`) usam
+URLs no bucket público `app-assets`, nos prefixos correspondentes ao kind.
+
+| Tenant | Imagens ativas | `splashHtmlUrl` ativo | Observação |
+|---|---|---|---|
+| BigPix | 5 PNG válidos | sim, 398.227 bytes | HTML legado com scripts inline e animações |
+| MegaBingo7 | 4 PNG válidos; `icon512` legado malformado | sim, 436.647 bytes | o `icon512` tem extensão/MIME PNG, mas começa com `EF BF BD` antes de `PNG`; não foi alterado |
+| OBA Prêmios | 5 PNG válidos | não | — |
+| Prêmios ao Vivo | 5 PNG válidos | não | — |
+| PixKeno | 5 PNG válidos | não | — |
+| SuperKeno | 5 PNG válidos | não | — |
+
+Nenhum asset de imagem ativo usa SVG, ICO, JPEG, WEBP ou GIF. Os SVGs de
+fallback em `/public/icons` são arquivos estáticos versionados, não uploads de
+tenant, e continuam intactos. Os HTMLs de BigPix e MegaBingo7 possuem sete tags
+`script`, sinais de animação e carregamento interno de recurso; removê-los do
+consumo nesta etapa quebraria comportamento real.
+
+### A-4 — RESOLVIDO no vetor de novos uploads
+
+SVG, HTML, GIF e ICO são rejeitados pelo servidor. A interface oferece somente
+PNG, JPEG e WEBP. O kind `splashHtml` não pertence mais à whitelist de upload.
+Além disso, `/api/admin/settings` consulta o valor tenant-scoped atual e aceita
+somente preservá-lo ou removê-lo; tentativa de definir um novo URL HTML retorna
+400. Assim, um payload manual não contorna o bloqueio da interface.
+
+Os dois HTMLs legados permanecem consumidos para não quebrar tenants ativos,
+mas não podem ser substituídos nem recriados pelo aplicativo. Eles continuam
+sob o sandbox entregue em C-2, sem `allow-same-origin`. Isso é uma exceção
+operacional congelada, não um caminho de novo upload. Sua retirada definitiva
+depende de substituir as animações por splash parametrizada/estática em uma
+etapa coordenada com BigPix e MegaBingo7.
+
+### M-3 — RESOLVIDO
+
+A whitelist tipada contém somente `logo`, `favicon`, `icon192`, `icon512` e
+`splash`. Valor desconhecido, vazio, com traversal, caracteres estranhos ou
+tipo manipulado retorna 400. O path do Storage é construído somente depois de
+revalidar o kind e normalizar o nome; strings arbitrárias não podem virar
+prefixo do bucket.
+
+### M-4 — RESOLVIDO para os formatos suportados
+
+PNG, JPEG e WEBP exigem concordância entre extensão, MIME declarado e assinatura
+real. Todo arquivo aceito é decodificado e regravado com Sharp; logo, favicon e
+ícones saem em PNG, enquanto splash preserva o codec raster detectado. Arquivo
+corrompido, truncado, assinatura incompatível ou falha do Sharp é rejeitado.
+Foi removido o fallback inseguro que gravava o original após erro.
+
+O `icon512` malformado do MegaBingo7 é legado já publicado e não foi modificado;
+o novo pipeline rejeitaria seu conteúdo em um futuro reupload.
+
+### M-6 — PARCIALMENTE RESOLVIDO
+
+Requests cujo `Content-Length` excede 1 MB mais 64 KB de overhead são rejeitados
+com 413 antes de `request.formData()`. Depois do parsing, `File.size` é validado
+contra o limite do kind antes de `arrayBuffer()` e o tamanho processado é
+validado novamente antes do Storage.
+
+Limitação residual: com `Content-Length` ausente ou falsamente baixo, o runtime
+do Next materializa o multipart em `request.formData()` antes de expor o
+`File.size`. Fechar integralmente esse caso exige parser multipart streaming.
+Essa refatoração e uma dependência adicional não foram introduzidas porque o
+ganho não justificaria a complexidade e o risco nesta etapa.
+
+### Limites, dependências e Storage
+
+Os limites existentes foram preservados: logo 500 KB, favicon 100 KB, icon192
+300 KB, icon512 500 KB e splash 1 MB. Eles agora valem tanto para o arquivo
+bruto quanto para a saída processada. O Sharp direto já existente é suficiente;
+nenhuma dependência foi adicionada.
+
+O bucket permanece público e sem mudança de `file_size_limit`,
+`allowed_mime_types`, grants ou policies. Um upload real autenticado foi feito
+com PNG sintético de 16x16: a rota gravou somente em `logo/...png`, a URL pública
+retornou 200 com `image/png` e assinatura PNG válida, e o objeto foi removido no
+teardown. O pós-check encontrou zero objetos `cetec-upload-test`, zero usuários
+Auth temporários e zero `admin_users` temporários. Nenhum asset legítimo foi
+modificado.
+
+### Testes específicos
+
+A suíte `tests/upload-security.test.mjs` cobre whitelist, valores manipulados,
+traversal, limite bruto, barreira de `Content-Length`, PNG/JPEG/WEBP reais, MIME
+e extensão falsos, magic bytes incompatíveis, corrupção/falha do Sharp,
+rejeição de SVG/HTML/GIF/ICO, congelamento do URL HTML legado, autenticação antes
+do parsing, path esperado, URL pública e ausência de arquivos temporários.
+
+Resultados finais: 17/17 upload, 8/8 CETEC P1, 10/10 auth estático, 17/17 auth
+real (incluindo o upload e o teardown) e 7/7 A-5 estático.
+Também passaram `npm ci --no-audit --no-fund`, TypeScript, build de produção no
+Next 16.2.11 e lint sem erros (permanece somente o warning preexistente de
+`formatDimension`). O smoke local confirmou `/` e `/api/settings` 200; `/admin`
+e `/admin/settings` 307 sem sessão; `/api/admin/upload` e `/api/push/send` 401;
+`/api/push/subscribe` 400 para payload inválido; manifest, Service Worker e os
+dois OneSignal Workers 200.
+

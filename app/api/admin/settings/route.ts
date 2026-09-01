@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { appConfig } from "@/lib/app-config";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import {
+  resolveLegacySplashHtmlUrl,
   resolveTenantSettings,
   type SettingsPayload,
 } from "@/lib/admin-settings-payload";
@@ -56,9 +57,41 @@ export async function POST(request: Request) {
     );
   }
 
+  const { data: currentRow, error: currentRowError } = await supabase
+    .from("app_settings")
+    .select("splash_html_url")
+    .eq("tenant_domain", hostname)
+    .maybeSingle();
+
+  if (currentRowError) {
+    return NextResponse.json(
+      { ok: false, error: "Nao foi possivel validar a splash HTML atual." },
+      { status: 500 },
+    );
+  }
+
+  const splashHtmlUrl = resolveLegacySplashHtmlUrl(
+    payload,
+    currentRow?.splash_html_url,
+  );
+
+  if (splashHtmlUrl === null) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Novas URLs de splash HTML estao desativadas. Mantenha a URL legada atual ou remova-a.",
+      },
+      { status: 400 },
+    );
+  }
+
   // tenantDomain from the request body is deliberately ignored. Both write
   // paths use only the tenant resolved from the server-side deployment URL.
-  const settings = resolveTenantSettings(payload, hostname);
+  const settings = resolveTenantSettings(
+    { ...payload, splashHtmlUrl },
+    hostname,
+  );
   const row = appSettingsToRow(settings);
   const query = settings.id
     ? supabase.from("app_settings").update(row).eq("tenant_domain", hostname)

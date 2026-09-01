@@ -8,6 +8,25 @@ function cleanText(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+export function resolveLegacySplashHtmlUrl(
+  payload: SettingsPayload,
+  currentValue: string | null | undefined,
+) {
+  const current = cleanText(currentValue);
+
+  if (!Object.prototype.hasOwnProperty.call(payload, "splashHtmlUrl")) {
+    return current;
+  }
+
+  const requested = cleanText(payload.splashHtmlUrl);
+
+  if (!requested || requested === current) {
+    return requested;
+  }
+
+  return null;
+}
+
 export function normalizeSettingsPayload(payload: SettingsPayload) {
   return {
     id: cleanText(payload.id),
