@@ -359,3 +359,77 @@ Cada deploy Vercel compartilha o mesmo banco Supabase. O campo `tenant_domain` e
 
 Pendência remanescente (baixo risco, não bloqueante): atualizar `supabase/schema.sql` para incluir `tenant_domain`, alinhando o arquivo de schema versionado ao estado real do banco.
 
+---
+
+## 9. Remediação CETEC executada — 2026-08-31
+
+O inventário e a remediação foram executados no projeto Supabase **PWA-WL**
+enquanto os ambientes estavam desconectados por orientação da auditoria. Não
+houve push ou deploy; as alterações foram consolidadas nesta branch após a
+validação.
+
+### Resultado dos achados
+
+- **C-1 — corrigido:** removidas as policies anon `Allow anonymous push
+  subscription registration` e `Allow anonymous push subscription updates`.
+  Grants `INSERT/UPDATE` de `anon` e `authenticated` foram revogados.
+  PostgREST com anon retornou `401` para INSERT e UPDATE; `service_role`
+  realizou INSERT (`201`) e UPDATE (`200`). A rota local
+  `/api/push/subscribe` retornou `200` e o registro exclusivo de teste foi
+  removido ao final.
+- **C-3 — corrigido:** removidas as policies públicas `allow all 1o5prjj_1`,
+  `_2` e `_3` de INSERT/UPDATE/DELETE no bucket `app-assets`. A policy pública
+  `_0` de SELECT foi preservada. Um asset exclusivo criado por `service_role`
+  permaneceu publicamente legível (`200`); tentativas anon de INSERT/UPDATE
+  foram negadas (`400`) e a tentativa de DELETE não removeu o objeto. O
+  `service_role` realizou INSERT e UPDATE (`200`) e removeu o artefato de teste.
+- **M-9 — corrigido:** removida a policy anon `Allow public read app_settings`
+  e revogado o grant direto de SELECT dos client roles. Leitura PostgREST anon
+  retornou `401`; `service_role` e `/api/settings` retornaram `200`, com
+  `source: "database"` e tenant `pwa.app-superkeno.com`.
+- **C-2 — corrigido na branch:** `app/page.tsx` passou de
+  `allow-scripts allow-same-origin allow-top-navigation` para
+  `allow-scripts allow-top-navigation`. Não existe uso de `contentWindow`,
+  `contentDocument`, `window.parent` ou `postMessage` dependente de
+  same-origin. A remoção não altera domínio, settings, manifest, Service Worker ou
+  assets próprios do tenant. TypeScript e build passaram; lint passou sem
+  erros e manteve um warning preexistente fora do escopo.
+
+### Snapshot e rollback
+
+O batch `cetec-security-2026-08-31` preserva em
+`cetec_audit.security_snapshot` 13 itens: seis policies, seis grants e a
+configuração do bucket. O rollback em `cetec_rollback.sql` recria as definições
+reais. Os rollbacks de segurança e Apache foram executados em transações de
+teste encerradas com `ROLLBACK`; todos os pós-checks passaram e nenhuma
+restauração persistiu. O bucket permaneceu `public = true`, `file_size_limit = null` e
+`allowed_mime_types = null`; limites de tamanho/MIME ficaram deliberadamente
+para hardening posterior.
+
+### Tenant Apache
+
+`pwa.app.apachejb.app` era um deployment legítimo antigo e descartado, não um
+incidente de segurança. O preview encontrou exclusivamente uma linha em cada
+uma de `admin_tenant_access`, `app_settings` e `push_subscriptions`, e zero em
+`push_campaigns`. A transação salvou as três linhas em
+`cetec_audit.apache_row_backup`, registrou o manifest e as removeu. A validação
+final encontrou zero referências Apache em todas as tabelas com
+`tenant_domain`. Nenhum asset foi apagado porque o ownership tenant-safe não
+pôde ser comprovado. O rollback de dados permanece disponível e desativado por
+padrão.
+
+As contagens de BigPix, MegaBingo7, OBA Prêmios, Prêmios ao Vivo, PixKeno e
+SuperKeno permaneceram exatamente iguais. O inventário também provou que
+`pwa.bingonacional.com` possui uma linha em `app_settings` neste Supabase; ela
+foi tratada como tenant legítimo adicional e permaneceu intacta.
+
+### Limitações da validação
+
+O fluxo autenticado completo de `/api/admin/upload` não foi executado porque
+não havia sessão administrativa disponível no navegador. A guarda sem sessão
+retornou `401`, e o mesmo cliente `service_role` usado pela rota foi validado
+diretamente com INSERT/UPDATE/DELETE e leitura pública no Storage. A validação
+visual da splash também não foi executada porque nenhuma instância de navegador
+estava disponível; não é declarada como concluída. O build local com settings
+reais do banco foi concluído com sucesso.
+

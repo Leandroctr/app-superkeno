@@ -215,7 +215,7 @@ export default function Home() {
     console.log("[SPLASH] Renderizando splash HTML via srcDoc");
     return (
       <iframe
-        sandbox="allow-scripts allow-same-origin allow-top-navigation"
+        sandbox="allow-scripts allow-top-navigation"
         srcDoc={splashHtml}
         style={{ display: "block", position: "fixed", inset: 0, margin: 0, width: "100%", height: "100%", border: 0 }}
         title="Splash animada"
