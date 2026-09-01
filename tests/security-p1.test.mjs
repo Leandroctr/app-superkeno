@@ -20,28 +20,28 @@ test("M-1 ignores tenantDomain supplied by the client", () => {
   const normalized = normalizeSettingsPayload({
     id: "row-id",
     tenantDomain: "attacker.example",
-    appName: " OBA ",
+    appName: " SuperKeno ",
   });
 
   assert.equal("tenantDomain" in normalized, false);
-  assert.equal(normalized.appName, "OBA");
+  assert.equal(normalized.appName, "SuperKeno");
   assert.equal(normalized.id, "row-id");
 });
 
 test("M-1 missing tenantDomain cannot become an empty persisted tenant", () => {
-  const serverTenant = "pwa.app-obapremios.com";
-  const settings = resolveTenantSettings({ appName: "OBA" }, serverTenant);
+  const serverTenant = "pwa.app-superkeno.com";
+  const settings = resolveTenantSettings({ appName: "SuperKeno" }, serverTenant);
 
   assert.equal(settings.tenantDomain, serverTenant);
 });
 
 test("M-1 server tenant overrides an attacker tenant on the persisted object", () => {
   const settings = resolveTenantSettings(
-    { appName: "OBA", tenantDomain: "pwa.attacker.example" },
-    "pwa.app-obapremios.com",
+    { appName: "SuperKeno", tenantDomain: "pwa.attacker.example" },
+    "pwa.app-superkeno.com",
   );
 
-  assert.equal(settings.tenantDomain, "pwa.app-obapremios.com");
+  assert.equal(settings.tenantDomain, "pwa.app-superkeno.com");
 });
 
 test("request IP uses Vercel's canonical forwarded header and validates IPs", () => {
@@ -90,11 +90,12 @@ test("rate-limit keys are deterministic HMACs without plaintext identifiers", ()
 
 test("A-5 accepts canonical OneSignal UUIDs and rejects malformed values", () => {
   assert.equal(
-    normalizeOneSignalId(" 123E4567-E89B-12D3-A456-426614174000 "),
-    "123e4567-e89b-12d3-a456-426614174000",
+    normalizeOneSignalId("123E4567-E89B-42D3-A456-426614174000"),
+    "123e4567-e89b-42d3-a456-426614174000",
   );
+  assert.equal(normalizeOneSignalId("123e4567-e89b-12d3-a456-426614174000"), null);
   assert.equal(normalizeOneSignalId("not-a-subscription"), null);
-  assert.equal(normalizeOneSignalId("123e4567-e89b-12d3-7456-426614174000"), null);
+  assert.equal(normalizeOneSignalId("123e4567-e89b-42d3-7456-426614174000"), null);
 });
 
 test("M-2 exposes the required security headers and frame protection", async () => {

@@ -694,3 +694,116 @@ Permanecem fora deste escopo: A-5 estrutural de `onesignal_id`, nonce/hash da
 CSP, vulnerabilidades npm remanescentes, hardening de uploads,
 `admin_audit_log` completo e demais P3/P4.
 
+---
+
+## 13. Remediação estrutural A-5 — subscriptions por tenant — 2026-08-31
+
+Esta etapa tratou somente a parte estrutural de A-5. O rate limiting distribuído
+do subscribe, já entregue na seção 10, foi preservado sem reimplementação.
+
+### Inventário anterior
+
+O inventário direto do PWA-WL encontrou a tabela `push_subscriptions` com 10
+colunas, `id uuid` como primary key, `onesignal_id text not null` e
+`tenant_domain text null`. A constraint
+`push_subscriptions_onesignal_id_key UNIQUE (onesignal_id)` impunha unicidade
+global. Os demais índices eram a PK, `created_at DESC` e `tenant_domain`.
+Não existem foreign keys nessa tabela.
+
+RLS estava e continua ativo, sem policies. `anon` e `authenticated` não possuíam
+INSERT/UPDATE efetivo; `service_role` possuía SELECT/INSERT/UPDATE/DELETE. O
+inventário de dados encontrou 359 linhas: 26 legadas com `tenant_domain = NULL`,
+80 BigPix, 114 MegaBingo7, 9 OBA, 51 PixKeno, 30 Prêmios ao Vivo e 49
+SuperKeno. Eram 357 `granted`, 2 `default`, todas `device_type = web`, todas UUID
+v4 canônicas, sem ID duplicado e sem divergência entre o App ID gravado e o
+App ID de `app_settings` nos registros com tenant.
+
+### Novo modelo e migration
+
+A migration
+`supabase/migrations/006_scope_push_subscriptions_by_tenant.sql` foi aplicada
+ao PWA-WL. Ela removeu somente a unicidade global e criou
+`push_subscriptions_onesignal_id_tenant_domain_key UNIQUE
+(onesignal_id, tenant_domain)`. Nenhuma linha foi atualizada, removida ou
+reclassificada. Os 26 registros legados permaneceram `NULL`; o PostgreSQL
+permite múltiplos valores `NULL` nessa constraint e a rota nunca grava tenant
+nulo.
+
+A migration é transacional, bloqueia a tabela durante a troca de metadata,
+valida colunas e pares existentes, e compara a contagem antes/depois. O ciclo
+migration → rollback foi executado dentro de uma transação externa descartada:
+359 linhas foram preservadas e a constraint global original foi restaurada
+antes do `ROLLBACK`. O rollback definitivo é fail-closed: se já houver um
+`onesignal_id` em mais de uma linha, ele aborta antes de qualquer alteração,
+pois restaurar unicidade global sem perda seria impossível.
+
+O primeiro hash integral e o hash obtido depois do DDL não coincidiram porque
+ao menos uma subscription recebeu `updated_at` novo por escrita concorrente
+durante a janela da validação; a contagem permaneceu 359 e a migration não
+contém DML. Nenhum `tenant_domain` ou `onesignal_id` foi alterado pela migration,
+e a atualização concorrente legítima não foi restaurada nem sobrescrita. Para
+cada suíte sintética foi capturado um novo snapshot imediatamente antes do
+teste, e o teardown confirmou hash idêntico depois da remoção dos artefatos.
+
+### Fluxo da API e contexto OneSignal
+
+`/api/push/subscribe` continua derivando o tenant exclusivamente de
+`NEXT_PUBLIC_PUBLIC_URL` no servidor. O UPSERT agora usa o conflito composto e
+grava `tenant_domain` e `onesignal_app_id` somente a partir da configuração
+server-side. Campos extras de tenant/App ID enviados no JSON não são lidos.
+
+O identificador aceito deve ser uma string de exatamente 36 caracteres em
+formato UUID v4 canônico; maiúsculas são normalizadas para minúsculas, enquanto
+whitespace, outras versões, variantes inválidas, coerção de tipo e payload com
+mais de 4 KiB são rejeitados. A rota também exige que o App ID de
+`app_settings` do tenant seja UUID v4 e coincida com o
+`NEXT_PUBLIC_ONESIGNAL_APP_ID` usado para compilar/inicializar o SDK. Uma
+configuração cruzada entre marcas falha com 503 em vez de persistir a relação.
+
+O SDK fornece ao browser `OneSignal.User.PushSubscription.id`. A documentação
+oficial define Subscription ID como UUID v4 read-only e único no contexto do
+App. A API oficial permite consultar uma identidade por App ID + Subscription
+ID usando a REST API key, mas os endpoints de leitura têm limite de 1
+request/segundo/App e podem responder 429, 5xx ou timeout. Por latência,
+disponibilidade e rate limit, essa consulta não foi transformada em dependência
+síncrona obrigatória de cada subscribe:
+
+- [Subscription ID e propriedades oficiais](https://documentation.onesignal.com/docs/en/user-subscription-properties)
+- [Consulta por Subscription ID](https://documentation.onesignal.com/reference/fetch-identity-by-subscription)
+- [Rate limits oficiais](https://documentation.onesignal.com/reference/rate-limits)
+
+Mesmo uma consulta bem-sucedida comprovaria que o ID existe no App esperado,
+mas não que o request HTTP atual partiu do navegador proprietário; o SDK não
+oferece assinatura/challenge de posse desse ID. O identificador não é tratado
+como segredo. A proteção adequada ao modelo atual é: UUID v4 de alta entropia,
+tenant e App ID exclusivamente server-side, coerência build/settings, chave
+composta e rate limiting distribuído.
+
+### Testes e estado final
+
+A matriz real passou 13/13 em duas execuções, inclusive contra o build de
+produção local: A/X e B/X independentes; updates e `permission_status` isolados;
+payload de movimentação ignorado; UUID inválido 400; payload grande 413; burst
+com 60 respostas de validação e uma 429 com `Retry-After`; escrita anon negada;
+escrita `service_role` preservada; consultas do painel e push send filtradas por
+tenant; e linha legada `NULL` intacta ao criar a relação tenant-scoped de mesmo
+ID. Todos os IDs e buckets sintéticos foram removidos.
+
+Também passaram `npm ci`, TypeScript, lint (somente o warning preexistente),
+build Next 16.2.11, 8/8 CETEC P1, 10/10 testes estáticos A-1/A-3, 16/16 testes
+reais A-1/A-3, 7/7 testes estáticos A-5 e smoke HTTP de settings, admin/APIs,
+manifest, Service Worker, OneSignal Worker e headers/CSP.
+
+O pós-check encontrou novamente 359 linhas, 26 legadas, zero dados sintéticos,
+zero pares duplicados, zero UUID inválido e zero App ID divergente. C-1, C-3,
+M-9, remoção Apache e permissões das RPCs de rate limit permaneceram intactos;
+o bucket `app-assets` continuou público, sem limites de tamanho/MIME e apenas
+com sua policy pública de SELECT.
+
+**Estado de A-5:** flood/rate limit, movimentação entre tenants e unicidade
+multi-tenant estão resolvidos tecnicamente. A validação de formato e do contexto
+App/tenant é suficiente para impedir associação cruzada pelo payload. A prova
+criptográfica absoluta de posse do `onesignal_id` continua não oferecida pelo
+modelo do OneSignal e permanece registrada como risco residual; por isso A-5
+não é declarado integralmente encerrado.
+

@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test:security": "node --experimental-strip-types --test tests/security-p1.test.mjs",
     "test:auth": "node --test tests/admin-auth.test.mjs",
-    "test:auth:real": "node --test tests/admin-auth.integration.mjs"
+    "test:auth:real": "node --test tests/admin-auth.integration.mjs",
+    "test:push-subscriptions": "node --experimental-strip-types --test tests/push-subscriptions.test.mjs",
+    "test:push-subscriptions:real": "node --test tests/push-subscriptions.integration.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

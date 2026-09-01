@@ -2,7 +2,8 @@ import { createHmac } from "node:crypto";
 import { isIP } from "node:net";
 
 const ONE_SIGNAL_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const ONE_SIGNAL_ID_LENGTH = 36;
 
 function normalizeIpv6Prefix(address: string) {
   const embeddedIpv4 = address.slice(address.lastIndexOf(":") + 1);
@@ -67,10 +68,10 @@ export function hashRateLimitKey(
 }
 
 export function normalizeOneSignalId(value: unknown) {
-  if (typeof value !== "string") {
+  if (typeof value !== "string" || value.length !== ONE_SIGNAL_ID_LENGTH) {
     return null;
   }
 
-  const normalized = value.trim().toLowerCase();
+  const normalized = value.toLowerCase();
   return ONE_SIGNAL_ID_PATTERN.test(normalized) ? normalized : null;
 }

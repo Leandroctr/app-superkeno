@@ -2,7 +2,7 @@ create extension if not exists "pgcrypto";
 
 create table if not exists public.push_subscriptions (
   id uuid primary key default gen_random_uuid(),
-  onesignal_id text not null unique,
+  onesignal_id text not null,
   permission_status text not null default 'unknown',
   user_agent text,
   device_type text not null default 'web',
@@ -146,6 +146,9 @@ create index if not exists push_campaigns_created_at_idx
 
 create index if not exists push_subscriptions_tenant_domain_idx
   on public.push_subscriptions (tenant_domain);
+
+create unique index if not exists push_subscriptions_onesignal_id_tenant_domain_key
+  on public.push_subscriptions (onesignal_id, tenant_domain);
 
 create index if not exists push_campaigns_tenant_domain_idx
   on public.push_campaigns (tenant_domain);

@@ -138,6 +138,22 @@ export async function POST(request: Request) {
   }
 
   const settings = await getAppSettings();
+  const configuredAppId = normalizeOneSignalId(appConfig.oneSignalAppId);
+  const tenantAppId = normalizeOneSignalId(settings.oneSignalAppId);
+
+  if (
+    !tenantDomain ||
+    settings.tenantDomain !== tenantDomain ||
+    !configuredAppId ||
+    !tenantAppId ||
+    configuredAppId !== tenantAppId
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "Configuracao de push indisponivel." },
+      { status: 503 },
+    );
+  }
+
   const now = new Date().toISOString();
   const { error } = await supabase.from("push_subscriptions").upsert(
     {
@@ -147,11 +163,11 @@ export async function POST(request: Request) {
       device_type: deviceType,
       last_seen_at: now,
       updated_at: now,
-      tenant_domain: settings.tenantDomain,
-      onesignal_app_id: settings.oneSignalAppId || null,
+      tenant_domain: tenantDomain,
+      onesignal_app_id: tenantAppId,
     },
     {
-      onConflict: "onesignal_id",
+      onConflict: "onesignal_id,tenant_domain",
     },
   );
 
