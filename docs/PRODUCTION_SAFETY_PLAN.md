@@ -203,3 +203,33 @@ Toda alteração técnica relevante deve atualizar a documentação corresponden
 7. Novas funcionalidades.
 8. Migrações estruturais.
 
+---
+
+## 12. Reconstrução segura do Supabase
+
+O projeto adota **baseline completo**. `supabase/schema.sql` é a única entrada
+versionada para provisionar a estrutura da aplicação em um projeto Supabase
+novo e vazio.
+
+Ordem obrigatória:
+
+1. criar um projeto Supabase descartável/staging pela plataforma;
+2. confirmar que os schemas gerenciados `auth` e `storage` existem;
+3. executar `supabase/schema.sql` uma única vez;
+4. opcionalmente reexecutar o mesmo arquivo para validar idempotência;
+5. executar os testes de `tests/schema-baseline.test.mjs` e os checks de RLS,
+   policies e grants;
+6. somente depois criar usuários Auth e dados de tenant pelo onboarding;
+7. conectar um deployment apenas após aprovação manual.
+
+Não aplicar nem reaplicar migrations 002, 003, 004, 005 ou 006 depois do
+baseline completo. Elas registram a evolução de bancos antigos e não compõem o
+fluxo de reconstrução novo. A migration 003 permanece exclusiva do histórico
+BigPix, embora sua estrutura final esteja no baseline comum.
+
+O baseline nunca deve ser executado sobre o PWA-WL compartilhado ou outro banco
+existente. Ele não cria tenants, não restaura usuários/dados e não recria
+`cetec_audit`; backups e evidências de remediação são específicos do ambiente.
+Qualquer prova dinâmica deve ocorrer primeiro em um Supabase local ou staging
+descartável, nunca em produção.
+

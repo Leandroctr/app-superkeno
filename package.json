@@ -12,6 +12,7 @@
     "test:auth:real": "node --test tests/admin-auth.integration.mjs",
     "test:upload": "node --experimental-strip-types --test tests/upload-security.test.mjs",
     "test:push-hardening": "node --experimental-strip-types --test tests/push-hardening.test.mjs",
+    "test:schema-baseline": "node --test tests/schema-baseline.test.mjs",
     "test:push-subscriptions": "node --experimental-strip-types --test tests/push-subscriptions.test.mjs",
     "test:push-subscriptions:real": "node --test tests/push-subscriptions.integration.mjs"
   },

@@ -43,9 +43,15 @@ test("A-5 route requires the tenant App ID to match the SDK build App ID", () =>
 
 test("A-5 base schema has tenant-scoped uniqueness only", () => {
   assert.doesNotMatch(schemaSource, /onesignal_id text not null unique/);
-  assert.match(
-    schemaSource,
-    /unique index[^\n]+push_subscriptions_onesignal_id_tenant_domain_key[\s\S]+\(onesignal_id, tenant_domain\)/i,
+  assert.doesNotMatch(schemaSource, /unique\s*\(\s*onesignal_id\s*\)/i);
+  assert.ok(
+    /constraint\s+push_subscriptions_onesignal_id_tenant_domain_key[\s\S]{0,80}unique\s*\(onesignal_id, tenant_domain\)/i.test(
+      schemaSource,
+    ) ||
+      /create unique index[^\n]+push_subscriptions_onesignal_id_tenant_domain_key[\s\S]{0,120}\(onesignal_id, tenant_domain\)/i.test(
+        schemaSource,
+      ),
+    "base schema must enforce tenant-scoped subscription uniqueness",
   );
 });
 

@@ -26,7 +26,7 @@ O código foi atualizado para operar como multi-tenant por domínio (`tenant_dom
 
 > **Modelo atual (código e banco, confirmado em 2026-07-02):** Multi-tenant por domínio — settings identificados por `tenant_domain`, banco único compartilhado pelos 4 PWAs ativos.
 
-> **Gap crítico (histórico, já resolvido):** a coluna `tenant_domain` não existia em `supabase/schema.sql` nem no banco. Leitura sempre retornava fallback de env vars. Escrita falhava com erro Postgres. **`supabase/schema.sql` ainda não foi atualizado para refletir a coluna** — pendência de baixo risco, não bloqueante, já que o banco de produção já tem a coluna aplicada via migration.
+> **Gap crítico (histórico, já resolvido):** a coluna `tenant_domain` não existia em `supabase/schema.sql` nem no banco. Leitura sempre retornava fallback de env vars. Escrita falhava com erro Postgres. O banco foi corrigido pela migration e, em 2026-09-01, `supabase/schema.sql` foi alinhado como baseline completo para projetos novos. Ver seção 16.
 
 > **Atualização 2026-07-04:** o projeto já opera com **6 tenants ativos** no mesmo banco compartilhado (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo, Pix Keno, SuperKeno — ver `docs/TENANT_DOMAIN_AUDIT.md`), e o risco de push sem isolamento por tenant (seção 4.4) — que se tornou real assim que OneSignal foi habilitado nos 6 — foi resolvido pela migration `004_add_tenant_isolation_to_push_tables.sql`, validada em produção. Ver seção 4.4 para o registro completo.
 
@@ -60,7 +60,7 @@ Após o merge de 5 commits remotos, o código foi atualizado para:
 - salvar settings com `.upsert({ onConflict: "tenant_domain" })`;
 - derivar o hostname de `NEXT_PUBLIC_PUBLIC_URL` via `extractHostname()`.
 
-Porém, `supabase/schema.sql` (o arquivo de schema base do repositório) **não foi atualizado** — a coluna foi adicionada em produção somente pela execução direta da migration `002` no banco, confirmada em 2026-07-02.
+Naquele momento, `supabase/schema.sql` (o arquivo de schema base do repositório) **não havia sido atualizado** — a coluna foi adicionada ao banco somente pela execução direta da migration `002`, confirmada em 2026-07-02. O drift do arquivo foi corrigido em 2026-09-01; ver seção 16.
 
 Consequência histórica (antes da migration rodar):
 
@@ -72,7 +72,7 @@ Consequência histórica (antes da migration rodar):
 
 Conclusão:
 
-> O bloqueio crítico de `tenant_domain` está resolvido. Pendência remanescente, de baixo risco: atualizar `supabase/schema.sql` para refletir a coluna já aplicada em produção (evita que um novo `schema.sql` rodado do zero num projeto novo saia desalinhado do banco real).
+> O bloqueio crítico de `tenant_domain` e o drift do baseline estão resolvidos. `supabase/schema.sql` agora representa o estado seguro necessário para reconstruir um projeto Supabase novo, sem seed de tenant.
 
 Ver auditoria completa e status atualizado: `docs/TENANT_DOMAIN_AUDIT.md`.
 
@@ -357,7 +357,7 @@ Cada deploy Vercel compartilha o mesmo banco Supabase. O campo `tenant_domain` e
 **Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
 **Detalhes completos:** `docs/TENANT_DOMAIN_AUDIT.md`
 
-Pendência remanescente (baixo risco, não bloqueante): atualizar `supabase/schema.sql` para incluir `tenant_domain`, alinhando o arquivo de schema versionado ao estado real do banco.
+**Atualização 2026-09-01:** `supabase/schema.sql` foi alinhado como baseline completo e tenant-neutral. A ordem de reconstrução está documentada na seção 16 e em `docs/PRODUCTION_SAFETY_PLAN.md`.
 
 ---
 
@@ -981,4 +981,74 @@ fail-closed sem Supabase; manifest, Service Worker e os dois workers OneSignal
 200, com CSP/headers preservados.
 
 M-7/`admin_audit_log` não pertence a este lote e permanece pendente.
+
+---
+
+## 16. M-8 — baseline do Supabase — 2026-09-01
+
+**Estado: RESOLVIDO no repositório.** Nenhum SQL foi executado e nenhuma
+configuração ou dado do PWA-WL foi alterado nesta etapa.
+
+### Inventário e drift
+
+O catálogo real foi consultado em modo somente leitura pela geração oficial de
+tipos do projeto PWA-WL. Ela confirmou:
+
+- tabelas públicas `app_settings`, `push_subscriptions`, `push_campaigns`,
+  `admin_users` e `admin_tenant_access`, com as colunas e a FK administrativa
+  esperadas;
+- schema auxiliar `cetec_security`, tabela `rate_limit_buckets` e RPCs públicas
+  `consume_rate_limit`/`reset_rate_limit`;
+- schema `cetec_audit` com os snapshots/backups históricos da remediação;
+- schema `storage` gerenciado pela plataforma;
+- bucket `app-assets` público, com `file_size_limit = null` e
+  `allowed_mime_types = null`, confirmado também pela API somente leitura.
+
+As definições de constraints, índices, RLS, policies e grants foram confrontadas
+com as migrations 002–006, a migration 003 exclusiva do BigPix, o inventário
+CETEC e as evidências pós-remediação já versionadas. O catálogo SQL bruto não
+foi aberto nesta sessão porque não havia conexão Postgres read-only disponível;
+nenhuma credencial foi extraída por caminho alternativo.
+
+Classificação do drift anterior:
+
+| Classe | Diferença |
+|---|---|
+| A — estrutura legítima ausente | `app_settings.tenant_domain`, índice único por tenant, tabelas administrativas, rate limiter/RPCs, grants e policy segura de Storage |
+| B — configuração histórica insegura | policies anon de INSERT/UPDATE em `push_subscriptions`, seed `App Big`, unicidade legada de `singleton_key` e ausência de revokes server-only |
+| C — migration representada | colunas/índices 004 e unicidade composta 006 já apareciam parcialmente no arquivo antigo |
+| D — não recriar no baseline | `cetec_audit` e seus dados de evidência; internals de `auth` e `storage`, que pertencem à plataforma; dados e identidades de tenants |
+| E — drift não explicado | nenhum drift estrutural necessário ficou sem fonte; nomes históricos de policy/índice foram normalizados no baseline |
+
+### Estratégia e reconstrução
+
+A estratégia escolhida é **baseline completo**. Para um projeto Supabase novo e
+vazio:
+
+1. criar o projeto pela plataforma Supabase, que fornece `auth` e `storage`;
+2. executar uma única vez `supabase/schema.sql`;
+3. reexecutar o mesmo arquivo apenas como teste de idempotência, se desejado;
+4. criar usuários Auth e dados de tenant pelo onboarding aprovado;
+5. validar as invariantes de segurança antes de conectar qualquer deployment.
+
+Não aplicar nem reaplicar migrations 002, 003, 004, 005 ou 006 depois do
+baseline completo. Elas permanecem como histórico de evolução de ambientes
+anteriores. A migration 003 continua versionada somente no BigPix; sua estrutura
+final está incorporada ao baseline comum sem copiar o arquivo histórico.
+
+O baseline não contém seed de tenant, não cria `cetec_audit`, não tenta recriar
+schemas internos do Supabase e não inclui dados de qualquer tenant. C-1, C-3 e M-9 permanecem
+fechados: tabelas da aplicação têm RLS e revokes para client roles, escrita de
+Storage é server-only, e somente a leitura pública do bucket `app-assets` é
+declarada.
+
+### Validação
+
+`tests/schema-baseline.test.mjs` valida estruturalmente tabelas, colunas,
+constraints, índices, RLS, grants, RPCs, bucket/policy, ausência das policies
+inseguras, unicidade `(onesignal_id, tenant_domain)`, neutralidade de tenant e
+guardas de reexecução. O Docker Desktop estava indisponível, portanto o schema
+não foi aplicado a um Supabase local descartável. Essa limitação não autorizou
+uso de produção; a execução real do baseline deve ocorrer primeiro em um novo
+staging vazio.
 
