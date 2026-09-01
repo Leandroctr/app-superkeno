@@ -560,3 +560,58 @@ nem inscrição sintética de validação.
 - `npm audit` ainda aponta 7 pacotes agregados (1 moderado e 6 altos); nenhuma
   dependência foi atualizada nesta etapa.
 
+---
+
+## 11. Atualização de segurança do Next.js — 2026-08-31
+
+Esta etapa isolada atualizou somente o runtime do Next.js de `16.2.9` para
+`16.2.11`, com versão exata em `package.json`. O objetivo foi tratar os
+advisories publicados para a linha 16.2, em especial o DoS de Server Actions no
+App Router (CVE-2026-64641 / GHSA-m99w-x7hq-7vfj), aplicável porque o projeto
+possui Server Actions. A versão `16.2.11` é a primeira correção na linha 16.2.
+
+O `npm audit` deixou de listar os nove advisories próprios do Next que afetavam
+`>=16.0.0 <16.2.11`, incluindo os quatro de severidade alta publicados para a
+linha 16.2. Não houve alteração de React, ReactDOM, código funcional,
+autenticação, Service Worker, OneSignal, Supabase ou migrations.
+
+### Validações executadas
+
+- instalação reproduzível com `npm ci --no-audit --no-fund`;
+- TypeScript com `tsc --noEmit`;
+- lint, preservando apenas o warning preexistente de `formatDimension` não
+  utilizado;
+- build de produção com Next.js `16.2.11`;
+- 8 testes CETEC P1;
+- smoke HTTP das páginas públicas, login/admin, settings, manifest, Service
+  Worker, worker OneSignal e rotas administrativas/push sem autenticação;
+- `git diff --check`;
+- `npm audit` e inspeção com `npm ls`/`npm explain`.
+
+TypeScript, build e testes passaram. O lint passou com o warning preexistente.
+No ambiente local desconectado, `/api/push/subscribe` respondeu `503` por falta
+do limitador Supabase, comportamento fail-closed esperado; as demais respostas
+de autenticação/autorização e os assets PWA permaneceram coerentes.
+
+### Vulnerabilidades npm remanescentes
+
+O total agregado permaneceu em 7 ocorrências: 1 moderada e 6 altas. A composição,
+porém, mudou: desapareceram os advisories próprios do Next, e permaneceram:
+
+- `@tailwindcss/postcss`/PostCSS, diretos apenas no toolchain de build, com
+  PostCSS `8.5.15`;
+- `brace-expansion` e `js-yaml`, transitivos apenas do ESLint;
+- `nanoid` `3.3.13`, transitivo das duas cópias de PostCSS;
+- PostCSS `8.4.31`, transitivo do Next, e PostCSS `8.5.15`, transitivo do
+  Tailwind; os vetores remanescentes dependem do processamento de CSS ou source
+  maps controlados por atacante, que não é uma entrada exposta pela aplicação;
+- Sharp `0.34.5`, cópia transitiva opcional do Next, ainda afetada pelo advisory
+  herdado do libvips. O Sharp direto usado pelos uploads continua em `0.35.2` e
+  os componentes `next/image` do projeto usam `unoptimized`, reduzindo a
+  aplicabilidade da cópia interna no runtime atual.
+
+O `npm audit` recomenda Next `16.3.4` porque essa versão passa a depender de
+PostCSS e Sharp corrigidos, não porque `16.2.11` permaneça afetado pelo advisory
+de Server Actions tratado aqui. A adoção de `16.3.4` deve ser avaliada em etapa
+separada, por ser avanço de minor, sem override automático nesta remediação.
+
