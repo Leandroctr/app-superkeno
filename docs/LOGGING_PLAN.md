@@ -344,3 +344,37 @@ Fase 4:
 - `oneSignalAppId` é mascarado: `appId.slice(0, 8) + "..."`
 - `ONESIGNAL_REST_API_KEY` e `SUPABASE_SERVICE_ROLE_KEY` nunca aparecem nos logs
 
+---
+
+## 7. Logs de segurança CETEC P1 — 2026-08-31
+
+Os eventos abaixo foram adicionados para diagnosticar bloqueios distribuídos sem
+persistir ou registrar identificadores em texto claro.
+
+### 7.1 lib/rate-limit.server.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `rate_limit_consume_error` | error | `scope`, `errorName`, `errorMessage` | IP, e-mail, hash HMAC, senha, service role key | Detectar indisponibilidade/erro da RPC de consumo |
+| `rate_limit_reset_error` | error | `scope`, `errorName`, `errorMessage` | IP, e-mail, hash HMAC, senha, service role key | Detectar falha ao limpar o bucket de uma conta autenticada |
+
+### 7.2 app/admin/login/page.tsx
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `admin_login_rate_limit_unavailable` | warn | `tenantDomain` | e-mail, IP, senha, hash HMAC | Sinalizar login bloqueado por falha da proteção |
+| `admin_login_rate_limited` | warn | `tenantDomain`, `scope`, `retryAfterSeconds` | e-mail, IP, senha, hash HMAC | Diagnosticar excesso sem expor o identificador |
+| `admin_login_supabase_auth_ok` | info | `tenantDomain` | e-mail, senha, tokens | Registrar sucesso no fluxo Supabase sem PII |
+| `admin_login_legacy_fallback_used` | warn | `tenantDomain` | e-mail, senha, cookie | Manter rastreabilidade do fallback legado sem PII |
+
+### 7.3 app/api/push/subscribe/route.ts
+
+| Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
+|---|---|---|---|---|
+| `push_subscribe_rate_limit_unavailable` | warn | `tenantDomain` | IP, `onesignal_id`, hash HMAC, service role key | Sinalizar bloqueio seguro por indisponibilidade |
+| `push_subscribe_rate_limited` | warn | `tenantDomain`, `scope`, `retryAfterSeconds` | IP, `onesignal_id`, hash HMAC, service role key | Diagnosticar flood por tenant sem expor visitante |
+
+Os buckets no banco guardam apenas `scope`, HMAC-SHA256, contagem e timestamps de
+janela/expiração. Nenhum log novo contém token, connection string, senha, e-mail,
+IP ou `onesignal_id`.
+

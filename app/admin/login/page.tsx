@@ -1,8 +1,15 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { appConfig } from "@/lib/app-config";
+import { extractHostname } from "@/lib/app-settings";
 import { createAdminSession, validateAdminCredentials } from "@/lib/admin-auth";
 import { createSupabaseSessionClient } from "@/lib/supabase/admin-session";
 import { logServerInfo, logServerWarn } from "@/lib/logger/server";
+import { consumeRateLimits, resetRateLimit } from "@/lib/rate-limit.server";
+import {
+  extractClientIp,
+  normalizeAccountIdentifier,
+} from "@/lib/request-security";
 
 type LoginPageProps = {
   searchParams: Promise<{
@@ -37,6 +44,39 @@ async function login(formData: FormData) {
 
   const email = String(formData.get("email") || "");
   const password = String(formData.get("password") || "");
+  const tenantDomain = extractHostname(appConfig.publicUrl);
+  const clientIp = extractClientIp(await headers());
+  const account = normalizeAccountIdentifier(email);
+  const ipIdentifier = `${tenantDomain}\0${clientIp}`;
+  const accountIdentifier = `${tenantDomain}\0${account}`;
+  const rateLimit = await consumeRateLimits([
+    {
+      scope: "admin_login_ip",
+      identifier: ipIdentifier,
+      limit: 30,
+      windowSeconds: 15 * 60,
+    },
+    {
+      scope: "admin_login_account",
+      identifier: accountIdentifier,
+      limit: 10,
+      windowSeconds: 15 * 60,
+    },
+  ]);
+
+  if (rateLimit.unavailable) {
+    logServerWarn("admin_login_rate_limit_unavailable", { tenantDomain });
+    redirect("/admin/login?error=security_unavailable");
+  }
+
+  if (!rateLimit.allowed) {
+    logServerWarn("admin_login_rate_limited", {
+      tenantDomain,
+      scope: rateLimit.limitedScope,
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    redirect("/admin/login?error=rate_limited");
+  }
 
   const supabaseOk = await tryLoginWithSupabaseAuth(email, password);
 
@@ -46,7 +86,8 @@ async function login(formData: FormData) {
     // nao precisa (nem deve) passar pelo cookie legado. Quem nao tiver linha
     // em admin_users (ou nao tiver acesso a este tenant_domain) e barrado
     // pelo proprio guard de /admin, nao aqui.
-    logServerInfo("admin_login_supabase_auth_ok", { email });
+    await resetRateLimit("admin_login_account", accountIdentifier);
+    logServerInfo("admin_login_supabase_auth_ok", { tenantDomain });
     redirect("/admin");
   }
 
@@ -54,7 +95,8 @@ async function login(formData: FormData) {
     redirect("/admin/login?error=1");
   }
 
-  logServerWarn("admin_login_legacy_fallback_used", { email });
+  await resetRateLimit("admin_login_account", accountIdentifier);
+  logServerWarn("admin_login_legacy_fallback_used", { tenantDomain });
   await createAdminSession();
   redirect("/admin");
 }
@@ -62,6 +104,8 @@ async function login(formData: FormData) {
 export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
   const hasError = params.error === "1";
+  const isRateLimited = params.error === "rate_limited";
+  const isSecurityUnavailable = params.error === "security_unavailable";
 
   return (
     <main
@@ -111,7 +155,19 @@ export default async function AdminLoginPage({ searchParams }: LoginPageProps) {
 
           {hasError ? (
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
-              Credenciais invalidas ou variaveis admin nao configuradas.
+              Email ou senha invalidos.
+            </p>
+          ) : null}
+
+          {isRateLimited ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+              Muitas tentativas. Aguarde alguns minutos e tente novamente.
+            </p>
+          ) : null}
+
+          {isSecurityUnavailable ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+              Login temporariamente indisponivel. Tente novamente em instantes.
             </p>
           ) : null}
         </form>

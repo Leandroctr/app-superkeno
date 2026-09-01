@@ -433,3 +433,130 @@ visual da splash também não foi executada porque nenhuma instância de navegad
 estava disponível; não é declarada como concluída. O build local com settings
 reais do banco foi concluído com sucesso.
 
+---
+
+## 10. Remediação CETEC P1 — 2026-08-31
+
+Esta etapa foi executada com todos os ambientes ainda desconectados. Não houve
+push nem deploy. Os achados críticos já tratados na seção 9 não foram reabertos
+nem alterados.
+
+### A-2 — proteção do login administrativo
+
+**Corrigido tecnicamente.** O Server Action de `/admin/login` agora consome
+contadores distribuídos no Postgres antes de chamar Supabase Auth ou o fallback
+legado:
+
+- até 30 tentativas por IP e tenant a cada 15 minutos;
+- até 10 tentativas por identificador de conta e tenant a cada 15 minutos;
+- o identificador normalizado e o IP são persistidos somente como HMAC-SHA256,
+  usando segredo server-side; e-mail, senha e IP não são gravados na tabela;
+- no deployment Vercel, a identificação prioriza `x-vercel-forwarded-for`; a
+  plataforma fornece esse header e sobrescreve `x-forwarded-for` para impedir
+  spoofing direto. Os fallbacks `x-forwarded-for`/`x-real-ip` existem para
+  execução local ou proxy compatível e não devem ser tratados como fronteira
+  confiável caso a aplicação seja hospedada diretamente fora da Vercel;
+- IPv4 usa o endereço validado e IPv6 é normalizado para o prefixo `/64`, evitando
+  cardinalidade e evasão triviais por endereços de privacidade do mesmo cliente;
+- IP ausente ou inválido cai explicitamente no bucket `unknown`, isolado por
+  tenant, em vez de ignorar o limite;
+- sucesso de autenticação limpa o bucket da conta, mas não o bucket de IP;
+- indisponibilidade do limitador bloqueia o login de forma segura;
+- mensagens de erro não informam se a conta administrativa existe e os logs não
+  incluem e-mail, IP, senha nem hash.
+
+Teste HTTP local: as tentativas sintéticas 1 a 10 retornaram o mesmo redirect
+genérico `error=1`; a 11ª retornou `error=rate_limited`. Os buckets sintéticos
+foram removidos. Um login administrativo válido ponta a ponta não foi executado,
+pois nenhuma credencial administrativa foi disponibilizada ao processo local;
+Supabase Auth e o fallback legado não foram removidos nem reestruturados.
+
+### A-5 — proteção de `/api/push/subscribe`
+
+**Corrigido para flood e validação de entrada; parcialmente pendente no modelo de
+identidade OneSignal.** A rota passou a aplicar, por IP e tenant, 60 requisições
+por minuto e 500 por hora, com resposta `429` e `Retry-After`. Falha do limitador
+retorna `503`. O corpo é limitado a 4 KiB, `onesignal_id` deve ser UUID canônico,
+`permissionStatus` continua restrito à lista existente e `deviceType` deve ser
+`web`.
+
+O inventário real encontrou 359 inscrições: todas possuem UUID de 36 caracteres,
+zero valores inválidos e somente `device_type = web`, portanto a validação é
+compatível com os dados atuais. Teste local real confirmou `400` para payload
+inválido, `200` para cadastro válido e, em burst concorrente, 58 respostas `200`
+restantes e uma `429` com `Retry-After`. O registro sintético foi gravado no
+tenant atual com o App ID correto e removido ao final.
+
+A unicidade global de `onesignal_id`, a possível movimentação entre tenants e a
+prova de propriedade do identificador **não foram declaradas resolvidas**. Uma
+correção definitiva exige decisão de modelo de dados/identidade e permanece no
+P2.
+
+### M-2 — headers de segurança e CSP
+
+**Corrigido no código.** Todas as respostas recebem:
+
+- `Content-Security-Policy`, inclusive `frame-ancestors 'none'`;
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`;
+- `X-Content-Type-Options: nosniff`;
+- `Referrer-Policy: strict-origin-when-cross-origin`;
+- `Permissions-Policy` desabilitando câmera, microfone, geolocalização,
+  pagamentos e USB.
+
+A CSP permite explicitamente scripts OneSignal, conexões HTTPS/WSS OneSignal e
+Supabase, worker próprio/blob, Google Fonts usados pelas splashes HTML e imagens
+e mídias HTTPS configuráveis. `unsafe-inline` foi mantido apenas em scripts e
+estilos para compatibilidade com o bootstrap do Next.js e HTML de splash atual;
+`unsafe-eval` não foi permitido. O header anterior do Service Worker OneSignal
+foi preservado.
+
+Validação HTTP local confirmou os cinco headers em `/`, `/admin/login` e no
+worker; `frame-ancestors 'none'` impede embedding externo do admin. Build com os
+settings reais do tenant atual passou. A validação visual e o console de CSP em
+navegador ficaram pendentes porque nenhuma instância de navegador estava
+disponível na sessão.
+
+### M-1 — `tenant_domain` na atualização de settings
+
+**Corrigido no código.** `tenantDomain` do JSON é ignorado durante a normalização.
+O objeto persistido recebe sempre o hostname derivado server-side de
+`NEXT_PUBLIC_PUBLIC_URL`, tanto no UPDATE quanto no UPSERT. A ausência do campo
+no payload não pode mais produzir string vazia nem mover a configuração para
+outro tenant.
+
+Três testes de regressão cobrem payload malicioso, payload sem `tenantDomain` e
+override pelo tenant server-side. O fluxo autenticado de gravação não foi
+executado para evitar alterar settings reais sem uma sessão administrativa; o
+TypeScript e o build validaram os dois caminhos compilados.
+
+### Migration e invariantes do Supabase
+
+A migration `005_add_distributed_rate_limits.sql` foi aplicada ao PWA-WL. Ela
+criou somente `cetec_security.rate_limit_buckets` e as RPCs públicas
+`consume_rate_limit`/`reset_rate_limit`, ambas `SECURITY DEFINER` e executáveis
+apenas por `service_role`. O schema e a tabela não concedem `USAGE`, leitura ou
+escrita a `anon`/`authenticated`; RLS está ativo. Cada consumo remove buckets
+expirados, evitando retenção indefinida.
+
+O teste via PostgREST confirmou sequência `true, true, false` para limite 2,
+`retry_after_seconds > 0`, nova permissão após expiração e HTTP `401` para RPC
+anon. O rollback foi executado dentro de transação descartada, removeu os três
+objetos e o `ROLLBACK` os restaurou.
+
+Os hashes de contagens por tenant, policies C-1/C-3/M-9 e configuração do bucket
+`app-assets` permaneceram idênticos antes e depois. Nenhum dado de tenant, asset,
+`file_size_limit` ou `allowed_mime_types` foi alterado. Ao fim, não restou bucket
+nem inscrição sintética de validação.
+
+### Riscos residuais desta etapa
+
+- login válido e teste visual/CSP em navegador ainda precisam de validação
+  operacional antes de produção;
+- `unsafe-inline` permanece na CSP por compatibilidade e pode ser substituído por
+  nonces/hashes em hardening posterior;
+- identidade/propriedade e unicidade multi-tenant de `onesignal_id` permanecem
+  P2;
+- autenticação legacy continua existente e pertence a A-1/A-3/P2;
+- `npm audit` ainda aponta 7 pacotes agregados (1 moderado e 6 altos); nenhuma
+  dependência foi atualizada nesta etapa.
+
