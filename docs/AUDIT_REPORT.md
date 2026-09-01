@@ -1052,3 +1052,67 @@ não foi aplicado a um Supabase local descartável. Essa limitação não autori
 uso de produção; a execução real do baseline deve ocorrer primeiro em um novo
 staging vazio.
 
+---
+
+## 17. M-5 e B-6 — dependencias e CI — 2026-09-01
+
+Esta etapa foi executada nos worktrees de seguranca, com os ambientes
+desconectados. Nao houve SQL, alteracao de Supabase, push Git ou deploy.
+
+### M-5 — PARCIALMENTE RESOLVIDO
+
+As 12 dependencias diretas declaradas como `latest` passaram a usar versoes
+explicitas. Bibliotecas de runtime sem advisory foram fixadas na versao ja
+validada; nao houve atualizacao oportunista de React, Supabase, ESLint ou
+TypeScript para majors/minors mais novas.
+
+Foram aplicadas apenas atualizacoes patch de baixo risco nas raizes corretas:
+
+- `@eslint/eslintrc` 3.3.5 para 3.3.7;
+- `@tailwindcss/postcss` e `tailwindcss` 4.3.1 para 4.3.3;
+- `eslint-config-next` 16.2.9 para 16.2.11, alinhado ao Next instalado.
+
+O lockfile passou a resolver versoes corrigidas de `brace-expansion`,
+`js-yaml`, `nanoid`, `browserslist` e do PostCSS usado pelo Tailwind. O audit
+inicial tinha 8 entradas agregadas (7 high, 1 moderate, 0 critical).
+
+Inventario dos advisories e aplicabilidade:
+
+| Entrada npm | Advisory | Cadeia/uso | Resultado |
+|---|---|---|---|
+| `@tailwindcss/postcss` 4.3.1 | agregado dos GHSAs de PostCSS | direta, somente build CSS | eliminado com 4.3.3 / PostCSS 8.5.26 |
+| `brace-expansion` 1.1.15 e 5.0.6 | GHSA-3jxr-9vmj-r5cp, GHSA-mh99-v99m-4gvg, GHSA-rgw5-rvv9-x895 | transitiva de ESLint/minimatch; patterns controlados pelo repositorio | eliminado com 1.1.18 e 5.0.9 |
+| `browserslist` 4.28.2 | GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g | transitiva de Babel/ESLint; build | eliminado com 4.28.8 |
+| `js-yaml` 4.2.0 | GHSA-52cp-r559-cp3m (CVE-2026-59869), GHSA-5p4m-2wfm-xmqj (CVE-2026-59870) | transitiva de ESLint; YAML do repositorio | eliminado com 4.3.2 |
+| `nanoid` 3.3.13 | GHSA-28wg-ghj8-5hjv, GHSA-2v37-7h3g-55p8 | transitiva de PostCSS; nao chamada diretamente pelo app | eliminado com 3.3.18 |
+| `next` 16.2.11 | entrada agregada por PostCSS/Sharp | direta, runtime e build | residual; fix indicado 16.3.4 |
+| `postcss` 8.4.31 do Next | GHSA-qx2v-qp2m-jg93, GHSA-6g55-p6wh-862q, GHSA-fxqj-rqcc-2cmp, GHSA-r28c-9q8g-f849 | transitiva fixa do Next; build com CSS versionado, sem entrada CSS publica | residual; requer Next 16.3.4 |
+| `sharp` 0.34.5 do Next | GHSA-f88m-g3jw-g9cj / CVE-2026-33327, 33328, 35590 e 35591 | transitiva do otimizador de imagens do Next; a rota de upload usa Sharp direto 0.35.2 seguro | residual; requer Next 16.3.4 |
+
+Resultado final do audit neste lote: 3 entradas agregadas high, 0 moderate e
+0 critical. Nao foi usado `npm audit fix` nem `overrides`.
+
+O Next permanece em 16.2.11. Essa versao fixa internamente PostCSS 8.4.31 e
+Sharp 0.34.5, portanto as entradas agregadas `next`, `postcss` e `sharp`
+continuam no audit. A correcao indicada pelo registry e Next 16.3.4, que troca
+essas dependencias por PostCSS 8.5.23 e Sharp `^0.35.4`. Como 16.3.4 e um minor
+do framework e inclui mudancas alem das bibliotecas vulneraveis, ela nao foi
+misturada neste commit e exige avaliacao/aprovacao separada. M-5 so podera ser
+declarado integralmente resolvido depois dessa decisao e de nova validacao.
+
+### B-6 — RESOLVIDO
+
+`.github/workflows/ci.yml` executa em pull requests e pushes para `main` e
+`security/**`, sem deploy. A matriz usa Node.js 22.22.3, cache npm, `npm ci`,
+TypeScript, lint, build e as suites estaticas CETEC P1, auth, A-5,
+upload-security, push-hardening, schema-baseline e politica de CI.
+
+O build usa somente valores ficticios sob dominios `.invalid`. Suites `:real`
+nao rodam no CI inicial e nenhum secret Supabase/OneSignal e declarado.
+
+O audit sempre gera um JSON retido como artefato por 14 dias. A politica falha
+fechada se o relatorio for invalido/indisponivel e bloqueia qualquer
+vulnerabilidade `critical`. Findings `high` conhecidos permanecem visiveis mas
+nao bloqueiam enquanto o upgrade separado do Next estiver pendente; apos esse
+lote, a politica deve ser elevada para bloquear `high`.
+

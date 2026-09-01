@@ -16,8 +16,11 @@ sites e plataformas.
 
 ## Como executar
 
+O baseline de desenvolvimento e CI usa Node.js `22.22.3` e npm `10`. Instale
+exatamente o lockfile versionado:
+
 ```bash
-npm install
+npm ci --no-audit --no-fund
 npm run dev
 ```
 
@@ -29,7 +32,31 @@ Abra `http://localhost:3000`.
 npm run dev
 npm run build
 npm run lint
+npm run typecheck
+npm run test:security
+npm run test:auth
+npm run test:push-subscriptions
+npm run test:upload
+npm run test:push-hardening
+npm run test:schema-baseline
+npm run test:ci-security
 ```
+
+As suites terminadas em `:real` exigem infraestrutura e credenciais controladas
+e nao fazem parte da matriz inicial do CI.
+
+## Integracao continua
+
+`.github/workflows/ci.yml` executa em pull requests e em pushes para `main` e
+branches `security/**`. O workflow usa Node.js `22.22.3`, cache oficial do npm,
+`npm ci`, TypeScript, lint, build e todas as suites estaticas de seguranca. O
+build recebe somente configuracao ficticia com dominios `.invalid`; nenhuma
+credencial Supabase ou OneSignal e usada.
+
+O `npm audit` gera um artefato JSON em toda execucao. A politica inicial falha
+quando existe vulnerabilidade `critical` ou quando o relatorio nao pode ser
+validado. Findings `high` conhecidos continuam visiveis no relatorio, mas so
+passarao a bloquear depois da decisao separada sobre a atualizacao do Next.
 
 ## Status atual
 

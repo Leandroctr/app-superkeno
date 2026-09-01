@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "test:security": "node --experimental-strip-types --test tests/security-p1.test.mjs",
     "test:auth": "node --test tests/admin-auth.test.mjs",
     "test:auth:real": "node --test tests/admin-auth.integration.mjs",
@@ -14,26 +15,27 @@
     "test:push-hardening": "node --experimental-strip-types --test tests/push-hardening.test.mjs",
     "test:schema-baseline": "node --test tests/schema-baseline.test.mjs",
     "test:push-subscriptions": "node --experimental-strip-types --test tests/push-subscriptions.test.mjs",
+    "test:ci-security": "node --test tests/ci-security-policy.test.mjs",
     "test:push-subscriptions:real": "node --test tests/push-subscriptions.integration.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
-    "@supabase/supabase-js": "latest",
+    "@supabase/supabase-js": "2.108.2",
     "next": "16.2.11",
-    "react": "latest",
-    "react-dom": "latest",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-onesignal": "^3.5.6",
     "sharp": "^0.35.2"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "latest",
-    "@tailwindcss/postcss": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "eslint": "latest",
-    "eslint-config-next": "latest",
-    "tailwindcss": "latest",
-    "typescript": "latest"
+    "@eslint/eslintrc": "3.3.7",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "25.9.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.11",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3"
   }
 }
