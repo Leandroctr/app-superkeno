@@ -31,13 +31,14 @@ Locais:
 
 Registrar:
 
-- source: database ou env;
-- app name;
-- public URL;
-- OneSignal App ID presente/ausente;
-- erro Supabase;
+- source: database ou env somente quando houver fallback/erro;
+- tenant quando necessario para identificar o deployment;
+- nome e codigo sanitizado do erro;
 - tempo de resposta;
 - fallback usado ou não.
+
+Não registrar em produção: `publicUrl`, URL do Supabase, App ID, payload de
+settings ou mensagem/stack bruta do provider.
 
 Objetivo:
 
@@ -87,19 +88,11 @@ Local:
 
 - `app/api/admin/upload/route.ts`
 
-Registrar:
-
-- kind;
-- nome original;
-- extensão;
-- tamanho;
-- mime type;
-- path gerado;
-- URL pública;
-- sucesso ou erro;
-- admin responsável;
-- user agent;
-- IP.
+O log operacional atual registra somente o evento `admin_upload_error`, a etapa
+(`storage_upload` ou `process_file`) e nome/código sanitizado do erro. Nome
+original, path, URL pública, payload, IP e user agent não vão para o console.
+Uma auditoria persistente mais ampla pertence ao lote futuro M-7 e deve definir
+retenção e governança antes de registrar metadados adicionais.
 
 Tabela sugerida:
 
@@ -119,12 +112,11 @@ Locais:
 
 Registrar subscribe:
 
-- onesignal_id;
 - permission_status;
 - device_type;
-- user_agent;
-- last_seen_at;
 - erro de upsert.
+
+`onesignal_id`, user agent e payload de inscrição não devem aparecer no console.
 
 Registrar campanha:
 
@@ -133,10 +125,14 @@ Registrar campanha:
 - target_url;
 - recipient_count;
 - status HTTP OneSignal;
-- resposta OneSignal;
-- notification_id;
+- presença de notification ID (boolean), nunca o ID no log;
 - erro de parse;
 - status final.
+
+Em `push_campaigns.error_message`, falhas do OneSignal usam somente JSON
+allowlisted com `provider`, `status`, `code`, `message` curta e `requestId`
+quando seguros. O valor tem limite de 500 caracteres; resposta, headers,
+destinatários e payload completos não são persistidos.
 
 Melhoria importante:
 
@@ -218,8 +214,8 @@ Campos:
 - `id`
 - `source`
 - `route`
-- `message`
-- `stack`
+- `error_name`
+- `error_code`
 - `metadata_json`
 - `created_at`
 
@@ -299,18 +295,15 @@ Fase 4:
 
 | Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
 |---|---|---|---|---|
-| `settings_fetch_start` | info | `tenantDomain` | chaves, tokens, senha | Rastrear início da busca por tenant |
-| `settings_fetch_success` | info | `tenantDomain`, `source: "database"`, `appName`, `publicUrl`, `hasOneSignalAppId` (bool), `durationMs` | `oneSignalAppId` completo, service role key | Confirmar leitura do banco com isolamento correto |
 | `settings_fetch_not_found` | warn | `tenantDomain`, `source: "env"`, `durationMs` | — | Alertar quando tenant_domain não tem registro |
-| `settings_fetch_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorMessage` | stack completa, chaves Supabase | Diagnosticar falhas na query ao banco |
+| `settings_fetch_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorCode` quando seguro | mensagem/stack completa, URLs, chaves Supabase | Diagnosticar falhas na query ao banco |
 | `settings_fetch_skip` | warn | `tenantDomain`, `reason: "supabase_not_configured"`, `source: "env"` | service role key | Alertar quando Supabase não está configurado |
 
 ### 6.2 app/api/settings/route.ts
 
 | Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
 |---|---|---|---|---|
-| `api_settings_response` | info | `tenantDomain`, `source`, `appName`, `publicUrl`, `hasOneSignalAppId` (bool), `durationMs` | `oneSignalAppId` completo, tokens | Confirmar fonte dos dados retornados pela API |
-| `api_settings_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorMessage` | chaves Supabase | Diagnosticar falhas na rota pública de settings |
+| `api_settings_error` | error | `tenantDomain`, `source: "env"`, `durationMs`, `errorName`, `errorCode` quando seguro | mensagem/stack completa, URLs, chaves Supabase | Diagnosticar falhas na rota pública de settings |
 | `api_settings_fallback` | warn | `tenantDomain`, `reason: "supabase_not_configured"`, `source: "env"` | — | Alertar quando rota cai em fallback sem Supabase |
 
 ### 6.3 app/api/push/send/route.ts
@@ -320,8 +313,8 @@ Fase 4:
 | `push_send_started` | info | `targetType`, `recipientCount`, `maskedAppId` (8 chars + "..."), `campaignId` | `ONESIGNAL_REST_API_KEY`, App ID completo | Rastrear início do envio de push |
 | `push_send_onesignal_response` | info | `targetType`, `recipientCount`, `httpStatus`, `ok`, `hasNotificationId` (bool), `maskedAppId`, `campaignId` | notification_id completo, REST key | Confirmar resultado da chamada ao OneSignal |
 | `push_send_parse_error` | warn | `targetType`, `httpStatus`, `maskedAppId`, `campaignId` | body da resposta | Alertar quando resposta do OneSignal não é JSON válido |
-| `push_send_parse_error_detail` | error | `errorName`, `errorMessage` | stack completa | Detalhe técnico do erro de parse |
-| `push_send_error` | error | `step` (fetch_subscriptions / create_campaign), `targetType`, `recipientCount`, `maskedAppId`, `errorName`, `errorMessage` | — | Rastrear falhas antes da chamada ao OneSignal |
+| `push_send_parse_error_detail` | error | `errorName`, `errorCode` quando seguro | mensagem/stack completa | Detalhe técnico mínimo do erro de parse |
+| `push_send_error` | error | `step` (fetch_subscriptions / create_campaign), `targetType`, `recipientCount`, `maskedAppId`, `errorName`, `errorCode` quando seguro | mensagem/stack completa, payload, recipients | Rastrear falhas antes da chamada ao OneSignal |
 
 ### 6.4 components/service-worker-register.tsx
 
@@ -340,7 +333,8 @@ Fase 4:
 
 **Invariantes do módulo:**
 - Nenhum helper lança exceção — todos envolvidos em `try/catch`
-- Erros logam apenas `name` e `message`, nunca stack completa
+- Erros logam apenas `errorName` e um `errorCode` allowlisted quando disponível;
+  mensagem, objeto e stack brutos são descartados
 - `oneSignalAppId` é mascarado: `appId.slice(0, 8) + "..."`
 - `ONESIGNAL_REST_API_KEY` e `SUPABASE_SERVICE_ROLE_KEY` nunca aparecem nos logs
 
@@ -366,13 +360,13 @@ persistir ou registrar identificadores em texto claro.
 | `admin_login_rate_limited` | warn | `tenantDomain`, `scope`, `retryAfterSeconds` | e-mail, IP, senha, hash HMAC | Diagnosticar excesso sem expor o identificador |
 | `admin_login_supabase_auth_ok` | info | `tenantDomain` | e-mail, senha, tokens | Registrar sucesso no fluxo Supabase sem PII |
 | `admin_login_authorization_denied` | warn | `tenantDomain` | e-mail, senha, tokens, role, identificador | Registrar identidade Auth valida sem role/acesso ao tenant, sem revelar qual regra falhou |
-| `admin_login_supabase_auth_error` | warn | `errorMessage` | e-mail, senha, tokens | Diagnosticar indisponibilidade do Auth sem registrar credenciais |
+| `admin_login_supabase_auth_error` | warn | `errorName` | mensagem/stack bruta, e-mail, senha, tokens | Diagnosticar indisponibilidade do Auth sem registrar credenciais |
 
 ### 7.3 app/api/admin/logout/route.ts
 
 | Evento | Nível | Dados registrados | Dados NÃO registrados | Motivo |
 |---|---|---|---|---|
-| `admin_logout_remote_error` | warn | `errorMessage` | cookies, access token, refresh token, e-mail | Registrar falha de revogação remota antes da limpeza local de fallback |
+| `admin_logout_remote_error` | warn | `errorName` | mensagem/stack bruta, cookies, access token, refresh token, e-mail | Registrar falha de revogação remota antes da limpeza local de fallback |
 
 ### 7.4 app/api/push/subscribe/route.ts
 
@@ -384,4 +378,40 @@ persistir ou registrar identificadores em texto claro.
 Os buckets no banco guardam apenas `scope`, HMAC-SHA256, contagem e timestamps de
 janela/expiração. Nenhum log novo contém token, connection string, senha, e-mail,
 IP ou `onesignal_id`.
+
+---
+
+## 8. Hardening CETEC B-2/B-3/B-4 — 2026-09-01
+
+### 8.1 Produção
+
+- `components/onesignal-initializer.tsx`: os diagnósticos do SDK existem somente
+  quando `NODE_ENV !== "production"`. Mesmo em development, registram apenas
+  booleans/estado agregado; Subscription ID, evento bruto, App ID, mensagem e
+  stack não são emitidos.
+- `app/page.tsx`: removidos logs de render, redirect, URL da splash, tamanho do
+  HTML e erro bruto no console do visitante.
+- `lib/app-settings.server.ts` e `app/api/settings/route.ts`: removidos eventos
+  informativos por request que incluíam app name/public URL. Permanecem apenas
+  fallback/not-found/erro mínimos.
+- `app/api/admin/upload/route.ts`: erro bruto do Storage/Sharp foi substituído
+  por `admin_upload_error`, com `step`, `errorName` e `errorCode` sanitizado.
+- `lib/logger/server.ts` e `lib/logger/client.ts`: objetos, mensagens e stacks
+  recebidos não são serializados; somente identificadores curtos no conjunto
+  `[a-zA-Z0-9._:-]` são aceitos.
+
+### 8.2 Persistência de falha OneSignal
+
+Formato máximo de 500 caracteres:
+
+```json
+{"provider":"onesignal","status":400,"code":"invalid_request","message":"Invalid notification request","requestId":"req_123"}
+```
+
+`code` e `requestId` são opcionais e allowlisted. Se a estrutura não for
+reconhecida, a mensagem é genérica. Headers, API key, resposta completa,
+payload e destinatários nunca são copiados para `error_message`. Em sucesso,
+`error_message` permanece `null`.
+
+M-7/`admin_audit_log` continua fora deste lote e não é declarado resolvido.
 

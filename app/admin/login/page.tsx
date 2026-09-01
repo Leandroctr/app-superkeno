@@ -44,9 +44,9 @@ async function tryLoginWithSupabaseAuth(
     }
 
     return true;
-  } catch (err) {
+  } catch {
     logServerWarn("admin_login_supabase_auth_error", {
-      errorMessage: err instanceof Error ? err.message : String(err),
+      errorName: "SupabaseAuthError",
     });
     return false;
   }

@@ -4,6 +4,7 @@ import { getAppSettings } from "@/lib/app-settings.server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
+import { formatOneSignalError, resolvePushTargetUrl } from "@/lib/push-security";
 
 type SendPayload = {
   title?: string;
@@ -12,29 +13,15 @@ type SendPayload = {
   targetType?: string;
 };
 
-function isSafeUrl(value: string) {
-  if (!value) {
-    return false;
-  }
-
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
 function normalizePayload(payload: SendPayload, settings: AppSettings) {
-  const fallbackTargetUrl = isSafeUrl(settings.platformUrl)
-    ? settings.platformUrl
-    : settings.publicUrl || "/";
-  const targetUrl = payload.targetUrl?.trim() || fallbackTargetUrl;
-
   return {
     title: payload.title?.trim().slice(0, 120) || "",
     message: payload.message?.trim().slice(0, 500) || "",
-    targetUrl: isSafeUrl(targetUrl) || targetUrl.startsWith("/") ? targetUrl : fallbackTargetUrl,
+    targetUrl: resolvePushTargetUrl(
+      payload.targetUrl || undefined,
+      [settings.platformUrl, settings.publicUrl, "/"],
+      settings.publicUrl,
+    ),
     targetType: payload.targetType === "test" ? "test" : "all",
   };
 }
@@ -199,7 +186,9 @@ export async function POST(request: Request) {
     .update({
     status: oneSignalResponse.ok ? "sent" : "failed",
     onesignal_notification_id: notificationId,
-    error_message: oneSignalResponse.ok ? null : JSON.stringify(oneSignalResult),
+    error_message: oneSignalResponse.ok
+      ? null
+      : formatOneSignalError(oneSignalResponse.status, oneSignalResult),
     sent_at: oneSignalResponse.ok ? new Date().toISOString() : null,
     })
     .eq("id", campaign.id);

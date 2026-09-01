@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
+import { logServerError } from "@/lib/logger/server";
 import {
   assertUploadRequestSize,
   buildStoragePath,
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
       });
 
     if (error) {
-      console.error("[UPLOAD] Falha no Supabase Storage:", error.message);
+      logServerError("admin_upload_error", error, { step: "storage_upload" });
       return NextResponse.json(
         { ok: false, error: "Nao foi possivel enviar o arquivo." },
         { status: 500 },
@@ -120,7 +121,7 @@ export async function POST(request: Request) {
       return validationErrorResponse(error);
     }
 
-    console.error("[UPLOAD] Falha inesperada no processamento do arquivo.", error);
+    logServerError("admin_upload_error", error, { step: "process_file" });
     return NextResponse.json(
       { ok: false, error: "Nao foi possivel processar o arquivo." },
       { status: 500 },

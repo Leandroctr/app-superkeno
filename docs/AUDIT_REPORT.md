@@ -918,3 +918,67 @@ e `/admin/settings` 307 sem sessão; `/api/admin/upload` e `/api/push/send` 401;
 `/api/push/subscribe` 400 para payload inválido; manifest, Service Worker e os
 dois OneSignal Workers 200.
 
+---
+
+## 15. Remediação CETEC B-2, B-3 e B-4 — 2026-09-01
+
+Esta etapa foi executada nos worktrees de segurança, com os ambientes fora de
+produção/desconectados. Não houve SQL, mudança de schema, env, Service Worker,
+worker OneSignal, manifest, asset, push real, push Git ou deploy.
+
+### B-2 — RESOLVIDO
+
+`targetUrl` de campanha passa por `lib/push-security.ts`. Uma URL interna deve
+começar com exatamente uma barra, não pode começar com `//`, não pode conter
+whitespace e, resolvida por `URL` contra o origin do PWA, deve continuar no
+mesmo origin. URLs absolutas preservam a regra existente do produto: são
+aceitas somente com forma explícita `http://` ou `https://` e confirmação pelo
+parser. `javascript:`, `data:`, `file:`, `blob:`, strings inválidas e variantes
+protocol-relative são descartadas em favor do fallback seguro.
+
+Não foi criada allowlist de domínio porque não existe evidência de que o
+produto deva bloquear os destinos HTTP/HTTPS externos já suportados. Push
+interno (`/` e `/pagina`) e absoluto HTTP/HTTPS legítimo permanecem aceitos.
+
+### B-3 — RESOLVIDO
+
+O console do visitante não recebe mais URL/tamanho/render da splash. Logs de
+debug OneSignal ficam compilados atrás de `NODE_ENV !== "production"` e não
+incluem Subscription ID, evento bruto, App ID, mensagem ou stack, mesmo em
+development. Erros de upload usam evento/etapa/nome/código sanitizado. Logs
+informativos de settings por request, que continham app name/public URL, foram
+removidos; warnings de fallback e eventos agregados de push/rate limit foram
+preservados por serem necessários ao troubleshooting.
+
+Os helpers de logger não serializam mais `error.message`, `String(error)` nem
+stack: aceitam apenas `errorName` e `errorCode` curtos e allowlisted. Isso reduz
+o risco de mensagens de Supabase/Auth/Storage carregarem URLs, detalhes de
+infraestrutura ou payloads inesperados.
+
+### B-4 — RESOLVIDO
+
+`push_campaigns.error_message` não recebe mais
+`JSON.stringify(oneSignalResult)`. Em falha, persiste JSON com no máximo 500
+caracteres contendo apenas `provider: "onesignal"`, status HTTP, código,
+mensagem curta sanitizada e request ID quando presentes e seguros. Campos
+desconhecidos, objetos profundos, headers, tokens, recipients e resposta bruta
+são ignorados. Estrutura desconhecida produz mensagem genérica; sucesso grava
+`null`.
+
+A suíte `tests/push-hardening.test.mjs` cobre URLs internas, `//`/`///`, HTTP e
+HTTPS absolutos, esquemas perigosos, URL inválida, backslash/whitespace,
+fallback, erro simples, resposta enorme/profunda/inesperada, segredo em campo
+não permitido, truncamento e ausência de `error_message` em sucesso.
+
+No SuperKeno passaram: instalação reproduzível com `npm ci --no-audit --no-fund`,
+TypeScript, build Next 16.2.11, lint sem erros (somente o warning preexistente de
+`formatDimension`), CETEC P1 8/8, auth estático 10/10, A-5 estático 7/7,
+upload-security 17/17 e B-2/B-3/B-4 8/8. As suítes reais de auth e A-5 ficaram
+explicitamente `SKIP`, pois os flags/segredos não existem no worktree
+desconectado. O smoke local, sem envio real, confirmou `/` e `/api/settings`
+200; admin redirects 307; upload e push send 401 sem sessão; subscribe 503
+fail-closed sem Supabase; manifest, Service Worker e os dois workers OneSignal
+200, com CSP/headers preservados.
+
+M-7/`admin_audit_log` não pertence a este lote e permanece pendente.
+

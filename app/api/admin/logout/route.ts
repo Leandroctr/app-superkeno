@@ -10,7 +10,7 @@ export async function POST(request: Request) {
 
     if (error) {
       logServerWarn("admin_logout_remote_error", {
-        errorMessage: error.message,
+        errorName: "SupabaseAuthSignOutError",
       });
       // Remove a sessao deste navegador mesmo se a revogacao remota falhar.
       await sessionClient.auth.signOut({ scope: "local" });

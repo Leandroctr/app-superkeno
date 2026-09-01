@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getFallbackAppSettings, settingsRowToAppSettings, extractHostname } from "@/lib/app-settings";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { appConfig } from "@/lib/app-config";
-import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
+import { logServerWarn, logServerError } from "@/lib/logger/server";
 
 export const dynamic = "force-dynamic";
 
@@ -39,15 +39,6 @@ export async function GET() {
 
   const source = data ? "database" : "env";
   const settings = settingsRowToAppSettings(data);
-
-  logServerInfo("api_settings_response", {
-    tenantDomain: hostname,
-    source,
-    appName: settings.appName,
-    publicUrl: settings.publicUrl,
-    hasOneSignalAppId: Boolean(settings.oneSignalAppId),
-    durationMs,
-  });
 
   return NextResponse.json({
     ok: true,

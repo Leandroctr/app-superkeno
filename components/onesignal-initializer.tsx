@@ -9,6 +9,32 @@ declare global {
   }
 }
 
+const isDevelopment = process.env.NODE_ENV !== "production";
+
+function debugLog(message: string, metadata?: Record<string, unknown>) {
+  if (isDevelopment) {
+    console.log("[OS]", message, metadata ?? "");
+  }
+}
+
+function debugWarn(message: string) {
+  if (isDevelopment) {
+    console.warn("[OS]", message);
+  }
+}
+
+function debugError(message: string, error?: unknown) {
+  if (isDevelopment) {
+    const candidate = error instanceof Error ? error.name : "UnknownError";
+    const errorName = /^[a-zA-Z0-9._:-]+$/.test(candidate)
+      ? candidate.slice(0, 64)
+      : "UnknownError";
+    console.error("[OS]", message, {
+      errorName,
+    });
+  }
+}
+
 // Evento disparado sempre que uma tentativa de sincronizar a inscricao push
 // termina (com sucesso ou falha) — inclusive quando nao ha nada para
 // sincronizar (usuario ainda nao optou por notificacoes). app/page.tsx ouve
@@ -36,7 +62,7 @@ async function sendSubscription(id: string): Promise<boolean> {
 
     return response.ok;
   } catch (err) {
-    console.error("[OS] Falha ao sincronizar inscricao push:", err);
+    debugError("Falha ao sincronizar inscricao push.", err);
     return false;
   }
 }
@@ -48,33 +74,19 @@ export function OneSignalInitializer() {
 
     const appId = process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID;
 
-    console.log("[OS] === OneSignal init start ===");
-    console.log("[OS] appId present:", Boolean(appId));
-    console.log("[OS] serviceWorker supported:", "serviceWorker" in navigator);
-    console.log("[OS] Notification supported:", "Notification" in window);
-    console.log("[OS] Notification.permission:", typeof Notification !== "undefined" ? Notification.permission : "N/A");
+    debugLog("OneSignal init start.", {
+      hasAppId: Boolean(appId),
+      serviceWorkerSupported: "serviceWorker" in navigator,
+      notificationSupported: "Notification" in window,
+    });
 
     if (!appId) {
-      console.warn("[OS] NEXT_PUBLIC_ONESIGNAL_APP_ID not set — aborting.");
+      debugWarn("OneSignal App ID ausente; inicializacao cancelada.");
       dispatchPushSyncSettled(false);
       return;
     }
 
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.getRegistrations().then((regs) => {
-        console.log("[OS] SW registrations before init:", regs.length);
-        regs.forEach((r, i) =>
-          console.log(`[OS]   SW[${i}] scope="${r.scope}" state="${r.active?.state ?? "no active worker"}"`)
-        );
-      });
-    }
-
-    console.log("[OS] Calling OneSignal.init() with:", {
-      appId: appId.slice(0, 8) + "...",
-      autoResubscribe: true,
-      serviceWorkerParam: { scope: "/onesignal/" },
-      serviceWorkerPath: "onesignal/OneSignalSDKWorker.js",
-    });
+    debugLog("Calling OneSignal.init().");
 
     void OneSignal.init({
       appId,
@@ -82,27 +94,21 @@ export function OneSignalInitializer() {
       serviceWorkerParam: { scope: "/onesignal/" },
       serviceWorkerPath: "onesignal/OneSignalSDKWorker.js",
     }).then(async () => {
-      console.log("[OS] init() resolved successfully.");
-
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.getRegistrations().then((regs) => {
-          console.log("[OS] SW registrations after init:", regs.length);
-          regs.forEach((r, i) =>
-            console.log(`[OS]   SW[${i}] scope="${r.scope}" state="${r.active?.state ?? "no active worker"}"`)
-          );
-        });
-      }
-
-      console.log("[OS] PushSubscription.id:", OneSignal.User.PushSubscription.id ?? "null");
-      console.log("[OS] PushSubscription.optedIn:", OneSignal.User.PushSubscription.optedIn);
-      console.log("[OS] Notifications.permission:", OneSignal.Notifications.permission);
+      debugLog("OneSignal init resolved.", {
+        hasActiveSubscription: Boolean(OneSignal.User.PushSubscription.id),
+        optedIn: OneSignal.User.PushSubscription.optedIn,
+        permission: OneSignal.Notifications.permission,
+      });
 
       OneSignal.User.PushSubscription.addEventListener("change", (event) => {
-        console.log("[OS] PushSubscription changed:", event.current);
         const { id, optedIn } = event.current;
+        debugLog("Push subscription state changed.", {
+          hasSubscriptionId: Boolean(id),
+          optedIn,
+        });
         if (id && optedIn) {
           void sendSubscription(id).then((ok) => {
-            console.log(ok ? "[OS] Sync (change) ok." : "[OS] Sync (change) falhou.");
+            debugLog(ok ? "Subscription sync succeeded." : "Subscription sync failed.");
             dispatchPushSyncSettled(ok);
           });
         }
@@ -112,21 +118,16 @@ export function OneSignalInitializer() {
       const currentOptedIn = OneSignal.User.PushSubscription.optedIn;
 
       if (currentId && currentOptedIn) {
-        console.log("[OS] Already subscribed — syncing to API.");
+        debugLog("Active subscription found; syncing.");
         const ok = await sendSubscription(currentId);
-        console.log(ok ? "[OS] Sync inicial ok." : "[OS] Sync inicial falhou.");
+        debugLog(ok ? "Initial subscription sync succeeded." : "Initial subscription sync failed.");
         dispatchPushSyncSettled(ok);
       } else {
-        console.log("[OS] Nenhuma inscricao ativa ainda — nada para sincronizar.");
+        debugLog("No active subscription to sync.");
         dispatchPushSyncSettled(false);
       }
     }).catch((error: unknown) => {
-      console.error("[OS] init() FAILED.");
-      console.error("[OS] Error:", error);
-      if (error instanceof Error) {
-        console.error("[OS] Message:", error.message);
-        console.error("[OS] Stack:", error.stack);
-      }
+      debugError("OneSignal init failed.", error);
       dispatchPushSyncSettled(false);
     });
   }, []);
