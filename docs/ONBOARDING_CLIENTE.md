@@ -3,7 +3,8 @@
 # Checklist de Onboarding de Novo Cliente
 
 **Projeto:** app-big-pwa  
-**Modelo atual:** white label por deploy individual.
+**Modelo atual:** deploy individual por PWA com banco Supabase compartilhado e
+isolamento por `tenant_domain`.
 
 ---
 
@@ -17,7 +18,7 @@ Este checklist assume que cada cliente possui:
 - domínio próprio;
 - configurações próprias;
 - OneSignal próprio;
-- linha/configuração própria no banco ou singleton do deploy.
+- linha/configuração própria no banco, identificada por `tenant_domain`.
 
 ---
 
@@ -63,8 +64,6 @@ Variáveis críticas:
 - `NEXT_PUBLIC_BACKGROUND_COLOR`
 - `NEXT_PUBLIC_ONESIGNAL_APP_ID`
 - `ONESIGNAL_REST_API_KEY`
-- `ADMIN_EMAIL`
-- `ADMIN_PASSWORD`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
@@ -85,12 +84,37 @@ Checklist:
 
 ## 5. Supabase
 
+### 5.1 Projeto novo / staging vazio
+
+O repositório adota **baseline completo**. Para reconstruir a aplicação em um
+projeto Supabase novo e vazio:
+
+1. criar o projeto Supabase e confirmar os schemas gerenciados `auth` e
+   `storage`;
+2. executar somente `supabase/schema.sql`;
+3. reexecutar o mesmo arquivo apenas se for necessário testar idempotência;
+4. validar `tests/schema-baseline.test.mjs`, RLS, grants, RPCs e o bucket
+   `app-assets`;
+5. criar o usuário Auth e a linha administrativa autorizada;
+6. criar `app_settings` com o `tenant_domain` exato do novo PWA;
+7. conectar o deployment somente após os checks de segurança.
+
+Não aplicar nem reaplicar migrations 002, 003, 004, 005 ou 006 depois do
+baseline completo. Elas são histórico de bancos anteriores. O arquivo de
+baseline não contém seed ou dados de qualquer tenant e não deve ser executado no PWA-WL
+compartilhado já existente.
+
+### 5.2 Checklist do tenant
+
 Checklist:
 
 - confirmar conexão;
 - confirmar bucket `app-assets`;
 - confirmar policies;
 - confirmar `app_settings`;
+- confirmar usuario no Supabase Auth;
+- confirmar role ativa em `admin_users`;
+- para role `admin`, confirmar o tenant em `admin_tenant_access`;
 - validar settings pelo painel admin;
 - testar upload de logo;
 - testar upload de favicon;
@@ -123,7 +147,7 @@ Checklist:
 Checklist:
 
 - acessar `/admin/login`;
-- logar com credenciais;
+- logar com a conta Supabase Auth autorizada para o tenant;
 - atualizar identidade visual;
 - atualizar URLs;
 - salvar settings;

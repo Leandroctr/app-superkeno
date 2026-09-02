@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "security/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_APP_NAME: CI PWA
+      NEXT_PUBLIC_APP_SHORT_NAME: CI
+      NEXT_PUBLIC_APP_DESCRIPTION: Safe CI build
+      NEXT_PUBLIC_PLATFORM_URL: https://example.invalid
+      NEXT_PUBLIC_SUPPORT_URL: https://example.invalid/support
+      NEXT_PUBLIC_PUBLIC_URL: https://ci.invalid
+      NEXT_PUBLIC_THEME_COLOR: "#101828"
+      NEXT_PUBLIC_BACKGROUND_COLOR: "#f6f7fb"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: CETEC P1
+        run: npm run test:security
+
+      - name: Auth static
+        run: npm run test:auth
+
+      - name: A-5 static
+        run: npm run test:push-subscriptions
+
+      - name: Upload security
+        run: npm run test:upload
+
+      - name: Push hardening
+        run: npm run test:push-hardening
+
+      - name: Schema baseline
+        run: npm run test:schema-baseline
+
+      - name: CI security policy
+        run: npm run test:ci-security
+
+      - name: npm audit policy
+        shell: bash
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node scripts/check-npm-audit.mjs "$RUNNER_TEMP/npm-audit.json"
+
+      - name: Upload npm audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/npm-audit.json
+          if-no-files-found: warn
+          retention-days: 14

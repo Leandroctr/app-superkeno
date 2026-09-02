@@ -8,10 +8,14 @@
 4. Confirmar que as tabelas existem:
    - `push_subscriptions`
    - `push_campaigns`
+   - `admin_users`
+   - `admin_tenant_access`
 5. Copiar `Project URL` para `NEXT_PUBLIC_SUPABASE_URL`.
 6. Copiar `anon public` para `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 7. Copiar `service_role` para `SUPABASE_SERVICE_ROLE_KEY`.
 8. Nunca expor `SUPABASE_SERVICE_ROLE_KEY` no front-end.
+9. Confirmar uma conta no Supabase Auth com linha ativa em `admin_users`.
+10. Para role `admin`, confirmar o tenant em `admin_tenant_access`.
 
 ## OneSignal
 
@@ -49,9 +53,6 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 NEXT_PUBLIC_ONESIGNAL_APP_ID=
 ONESIGNAL_REST_API_KEY=
-
-ADMIN_EMAIL=
-ADMIN_PASSWORD=
 ```
 
 ## Testes de producao
@@ -62,7 +63,7 @@ ADMIN_PASSWORD=
 4. Aceitar permissao de notificacao.
 5. Confirmar novo registro em `push_subscriptions`.
 6. Acessar `/admin/login`.
-7. Entrar com `ADMIN_EMAIL` e `ADMIN_PASSWORD`.
+7. Entrar com uma conta Supabase Auth autorizada para o tenant.
 8. Enviar um push de teste.
 9. Confirmar recebimento da notificacao.
 10. Enviar push para todos.
@@ -75,5 +76,5 @@ ADMIN_PASSWORD=
 - Dominio HTTPS configurado.
 - Supabase com schema aplicado.
 - OneSignal apontando para o dominio correto.
-- Admin protegido por credenciais fortes.
+- Admin protegido por Supabase Auth, role ativa e acesso ao tenant.
 - Push de teste recebido no dispositivo real.

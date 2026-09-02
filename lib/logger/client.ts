@@ -2,6 +2,19 @@ import type { LogMetadata } from "./types";
 
 const PREFIX = "[client-log]";
 
+function getErrorName(error: unknown): string {
+  const candidate =
+    error instanceof Error
+      ? error.name
+      : error !== null && typeof error === "object"
+        ? (error as Record<string, unknown>).name
+        : undefined;
+
+  return typeof candidate === "string" && /^[a-zA-Z0-9._:-]+$/.test(candidate)
+    ? candidate.slice(0, 64)
+    : "UnknownError";
+}
+
 export function logClientInfo(event: string, metadata?: LogMetadata): void {
   try {
     console.log(PREFIX, event, metadata ?? "");
@@ -24,12 +37,7 @@ export function logClientError(
   metadata?: LogMetadata,
 ): void {
   try {
-    const errorInfo =
-      error instanceof Error
-        ? { errorName: error.name, errorMessage: error.message }
-        : error !== undefined
-          ? { error: String(error) }
-          : {};
+    const errorInfo = error === undefined ? {} : { errorName: getErrorName(error) };
     console.error(PREFIX, event, { ...errorInfo, ...(metadata ?? {}) });
   } catch {
     // never throw

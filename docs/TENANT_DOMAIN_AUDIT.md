@@ -55,13 +55,13 @@ banco (via `service_role`, sem escrita) para confirmar o estado real. Resultado:
   com índice único simples.
 - **Backup lógico da tabela `app_settings`** (JSON completo, 4 linhas) foi salvo
   fora de qualquer repositório git antes de qualquer nova alteração de schema.
-- **Nenhuma alteração de schema foi executada nesta etapa.** As seções 1 a 9 abaixo
+- **Nenhuma alteração de schema foi executada nesta etapa.** As seções 1 a 8 abaixo
   são o registro histórico da auditoria original (2026-06-28/29) e permanecem como
   estavam, exceto pelas notas de status adicionadas onde a conclusão mudou.
-- **Pendência remanescente (baixo risco):** `supabase/schema.sql` (arquivo
-  versionado) ainda não inclui `tenant_domain` — o banco real já tem a coluna, mas
-  o arquivo de schema do repositório ficou desalinhado. Alinhar é recomendado antes
-  de usar `schema.sql` para provisionar um projeto Supabase novo do zero.
+- **Atualização 2026-09-01:** a pendência do arquivo foi resolvida.
+  `supabase/schema.sql` agora é um baseline completo para projeto Supabase novo e
+  inclui `tenant_domain` e o índice único esperado. As seções históricas abaixo
+  permanecem como registro do diagnóstico original.
 
 ---
 
@@ -77,9 +77,11 @@ Antes do merge, o projeto usava `singleton_key boolean unique` para garantir uma
 
 ### P1. A coluna `tenant_domain` existe no `supabase/schema.sql`?
 
-**Não.**
+**Não no snapshot histórico de 2026-06-28.** Desde 2026-09-01, o baseline
+versionado contém a coluna e o índice único; ver seção 9.
 
-O arquivo `supabase/schema.sql` não contém a coluna `tenant_domain`. A definição atual da tabela é:
+No snapshot de 2026-06-28, o arquivo `supabase/schema.sql` não continha a coluna
+`tenant_domain`. A definição daquele momento era:
 
 ```sql
 create table if not exists public.app_settings (
@@ -303,7 +305,9 @@ where  tenant_domain is null
 
 **Nota técnica:** o índice não é parcial (`WITHOUT WHERE`). O Postgres permite múltiplas linhas com `tenant_domain = NULL` em índices únicos porque `NULL != NULL` por padrão. Um índice parcial (`WHERE IS NOT NULL`) não seria compatível com `ON CONFLICT (tenant_domain)` sem predicado no UPSERT.
 
-**Status (atualizado em 2026-07-02):** migration executada em produção — coluna e (com alta confiança) índice único já existem. Ver §0. Pendência remanescente: alinhar `supabase/schema.sql` (arquivo versionado) à coluna já presente no banco real.
+**Status (atualizado em 2026-09-01):** migration executada no banco e baseline
+versionado alinhado. `supabase/schema.sql` inclui a coluna e o índice único
+`app_settings_tenant_domain_idx`.
 
 ---
 
@@ -420,10 +424,10 @@ Remove o índice e a coluna. O sistema volta ao estado anterior (falha silencios
 > **Atualizado em 2026-07-02 — ver §0 para a evidência.** Tabela abaixo reflete o
 > estado histórico (2026-06-28/29); a coluna "Estado 2026-07-02" foi adicionada.
 
-| Pergunta | Resposta (histórico, 2026-06-28) | Estado 2026-07-02 |
+| Pergunta | Resposta (histórico, 2026-06-28) | Estado atualizado |
 |---|---|---|
 | `tenant_domain` existe no schema (banco)? | Não — migration planejada, pendente de execução | **Sim — confirmado em produção** |
-| `tenant_domain` existe em `supabase/schema.sql` (arquivo)? | Não | **Ainda não — pendência de baixo risco** |
+| `tenant_domain` existe em `supabase/schema.sql` (arquivo)? | Não | **Sim desde 2026-09-01 — baseline completo alinhado** |
 | Índice único existe? | Não — incluído na migration | **Sim — confirmado via SQL Editor (`app_settings_tenant_domain_idx`, nome diferente do previsto mas equivalente)** |
 | Código lê por `tenant_domain`? | Sim — 3 arquivos | Sim (sem mudança) |
 | Código escreve por `tenant_domain`? | Sim — 1 arquivo (UPSERT quebrado até migration) | **Sim, e funcionando** |
@@ -492,3 +496,18 @@ Remove índice e coluna. O sistema volta ao estado de falha silenciosa anterior.
 1. Backup do banco.
 2. Preenchimento do placeholder `SUBSTITUIR_PELO_DOMINIO_DO_CLIENTE`.
 3. Aprovação do responsável técnico.
+
+---
+
+## 9. Fechamento do drift M-8 — 2026-09-01
+
+`supabase/schema.sql` passou a ser o baseline completo e tenant-neutral para um
+projeto Supabase novo e vazio. Ele inclui a estrutura final de
+`app_settings.tenant_domain`, o índice único por tenant, tabelas administrativas,
+push tenant-scoped, rate limiter, RLS, grants server-only e configuração segura
+do bucket `app-assets`.
+
+Não aplicar nem reaplicar migrations 002, 003, 004, 005 ou 006 depois desse
+baseline completo. Elas são histórico de ambientes anteriores. O baseline não
+possui seed de tenant e não deve ser executado sobre o banco compartilhado
+existente.

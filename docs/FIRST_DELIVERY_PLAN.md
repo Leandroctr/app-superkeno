@@ -19,7 +19,9 @@ O primeiro lote de entrega tem três objetivos complementares:
 
 Este lote **não inclui** Chat Digital, Welcome Chat, automações ou reconstrução estrutural do banco.
 
-**Atenção — bloqueio identificado após auditoria:** antes de iniciar a Etapa 1 (logger), é obrigatório resolver a migration de `tenant_domain`. Ver `docs/TENANT_DOMAIN_AUDIT.md` e Etapa 0 abaixo.
+**Atualização 2026-09-01:** o bloqueio de `tenant_domain` no banco e o drift do
+baseline foram resolvidos. `supabase/schema.sql` agora é o baseline completo
+documentado para projetos novos. Ver `docs/TENANT_DOMAIN_AUDIT.md` e Etapa 0.
 
 ---
 
@@ -61,7 +63,7 @@ Os itens abaixo estão **fora deste lote** e não devem ser tocados:
 
 | Área                        | Motivo da exclusão                                          |
 |-----------------------------|-------------------------------------------------------------|
-| Multi-tenant completo        | O código já usa `tenant_domain`; o bloqueio atual é de schema, não de planejamento. Ver Etapa 0 e `docs/TENANT_DOMAIN_AUDIT.md` |
+| Multi-tenant completo        | O código já usa `tenant_domain`; o bloqueio histórico de schema foi resolvido. Ver Etapa 0 e `docs/TENANT_DOMAIN_AUDIT.md` |
 | Chat Digital                | Fora do escopo do produto PWA white label                  |
 | Welcome Chat                | Idem                                                        |
 | Automações                  | Idem                                                        |
@@ -210,7 +212,10 @@ mantido como registro.
 
 **Prioridade (histórica):** esta etapa deveria ser concluída e aprovada antes de qualquer outra.
 
-**Problema:** o código usa `.eq("tenant_domain", hostname)` e `.upsert({ onConflict: "tenant_domain" })`, mas a coluna `tenant_domain` não existe em `supabase/schema.sql`. Resultado: settings sempre em fallback; painel admin não consegue salvar.
+**Problema histórico:** o código usava `.eq("tenant_domain", hostname)` e
+`.upsert({ onConflict: "tenant_domain" })`, mas a coluna `tenant_domain` não
+existia no `supabase/schema.sql` daquele snapshot. O banco foi corrigido em
+2026-07-02 e o baseline versionado foi alinhado em 2026-09-01.
 
 **Arquivo de migration:** `supabase/migrations/002_add_tenant_domain_to_app_settings.sql`  
 **Arquivo de rollback:** `supabase/migrations/002_add_tenant_domain_to_app_settings.rollback.sql`
@@ -304,7 +309,8 @@ lib/diagnostics/
 └── index.ts    ← getDiagnostics(): Promise<DiagnosticsResult>
 ```
 
-**Método da rota:** GET, protegido por `isAdminAuthenticated()`  
+**Método da rota:** GET, protegido por `requireTenantAccess()`
+
 **Retorna (somente leitura):**
 - `source` das settings (`database` ou `env`)
 - `appName`, `publicUrl`
@@ -592,8 +598,8 @@ O primeiro lote estará concluído quando todos os critérios abaixo forem verif
 
 ### tenant_domain (Etapa 0 — pré-requisito de tudo)
 
-- [ ] `supabase/schema.sql` contém coluna `tenant_domain text` e índice único
-- [ ] Migration executada no banco Supabase
+- [x] `supabase/schema.sql` contém coluna `tenant_domain text` e índice único
+- [x] Migration executada no banco Supabase
 - [ ] `GET /api/settings` retorna `source: database` (não `source: env`)
 - [ ] Painel admin consegue salvar configurações sem erro 500
 

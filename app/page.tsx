@@ -116,12 +116,11 @@ export default function Home() {
     // tentativa de sincronizar a inscricao push termina, com sucesso ou
     // falha) quanto pelo timer de seguranca (redirectDelayMs) — o que vier
     // primeiro. Guard hasRedirected evita disparo duplo.
-    function redirectToPlatform(url: string, reason: string) {
+    function redirectToPlatform(url: string) {
       if (hasRedirected) {
         return;
       }
       hasRedirected = true;
-      console.log(`[SPLASH] Redirecionando para a plataforma (motivo: ${reason}).`);
       window.location.assign(url);
     }
 
@@ -148,7 +147,6 @@ export default function Home() {
       }
 
       if (loadedSettings.splashHtmlUrl) {
-        console.log("[SPLASH] Buscando HTML da splash:", loadedSettings.splashHtmlUrl);
         try {
           const htmlResponse = await fetch(loadedSettings.splashHtmlUrl);
           if (!htmlResponse.ok) {
@@ -157,10 +155,9 @@ export default function Home() {
           const html = await htmlResponse.text();
           if (isActive) {
             setSplashHtml(prepareHtml(html));
-            console.log("[SPLASH] HTML carregado, tamanho:", html.length, "chars");
           }
-        } catch (err) {
-          console.warn("[SPLASH] Falha ao buscar HTML da splash, usando splash estatica:", err);
+        } catch {
+          // A splash estatica e o fallback esperado quando o HTML legado falha.
         }
       }
 
@@ -187,14 +184,13 @@ export default function Home() {
         // seguranca: garante que o usuario nunca fique preso na splash,
         // usando o mesmo redirectDelayMs ja configurado para este tenant
         // (nao aumenta o tempo de espera de hoje).
-        pushSyncListener = (event: Event) => {
-          const ok = Boolean((event as CustomEvent<{ ok?: boolean }>).detail?.ok);
-          redirectToPlatform(platformUrl, ok ? "push sync confirmado" : "push sync falhou");
+        pushSyncListener = () => {
+          redirectToPlatform(platformUrl);
         };
         window.addEventListener("push-sync-settled", pushSyncListener, { once: true });
 
         redirectTimer = window.setTimeout(() => {
-          redirectToPlatform(platformUrl, "timeout de seguranca");
+          redirectToPlatform(platformUrl);
         }, loadedSettings.redirectDelayMs);
       }
     }
@@ -212,10 +208,9 @@ export default function Home() {
   }, []);
 
   if (splashHtml) {
-    console.log("[SPLASH] Renderizando splash HTML via srcDoc");
     return (
       <iframe
-        sandbox="allow-scripts allow-same-origin allow-top-navigation"
+        sandbox="allow-scripts allow-top-navigation"
         srcDoc={splashHtml}
         style={{ display: "block", position: "fixed", inset: 0, margin: 0, width: "100%", height: "100%", border: 0 }}
         title="Splash animada"
@@ -235,7 +230,6 @@ export default function Home() {
     );
   }
 
-  console.log("[SPLASH] Renderizando splash estatica");
   return (
     <main
       className="grid min-h-dvh place-items-center px-5 py-8 text-slate-950"

@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import type { AppSettings } from "@/lib/app-settings";
 import { getAppSettings } from "@/lib/app-settings.server";
-import { isAdminAuthenticated } from "@/lib/admin-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
+import { formatOneSignalError, resolvePushTargetUrl } from "@/lib/push-security";
 
 type SendPayload = {
   title?: string;
@@ -13,29 +13,15 @@ type SendPayload = {
   targetType?: string;
 };
 
-function isSafeUrl(value: string) {
-  if (!value) {
-    return false;
-  }
-
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
 function normalizePayload(payload: SendPayload, settings: AppSettings) {
-  const fallbackTargetUrl = isSafeUrl(settings.platformUrl)
-    ? settings.platformUrl
-    : settings.publicUrl || "/";
-  const targetUrl = payload.targetUrl?.trim() || fallbackTargetUrl;
-
   return {
     title: payload.title?.trim().slice(0, 120) || "",
     message: payload.message?.trim().slice(0, 500) || "",
-    targetUrl: isSafeUrl(targetUrl) || targetUrl.startsWith("/") ? targetUrl : fallbackTargetUrl,
+    targetUrl: resolvePushTargetUrl(
+      payload.targetUrl || undefined,
+      [settings.platformUrl, settings.publicUrl, "/"],
+      settings.publicUrl,
+    ),
     targetType: payload.targetType === "test" ? "test" : "all",
   };
 }
@@ -45,15 +31,8 @@ function maskAppId(appId: string): string {
 }
 
 export async function POST(request: Request) {
-  // Mesmo padrao de guard adotado em /admin, /admin/settings,
-  // /api/admin/settings e /api/admin/upload: sessao Supabase real
-  // (checada por tenant) OU cookie legado, qualquer um dos dois libera o
-  // acesso nesta fase de transicao. Roda antes de qualquer configuracao,
-  // consulta a push_subscriptions ou chamada ao OneSignal abaixo.
   const currentAdmin = await requireTenantAccess();
-  const hasLegacySession = await isAdminAuthenticated();
-
-  if (!currentAdmin && !hasLegacySession) {
+  if (!currentAdmin) {
     return NextResponse.json(
       { ok: false, error: "Nao autenticado." },
       { status: 401 },
@@ -207,7 +186,9 @@ export async function POST(request: Request) {
     .update({
     status: oneSignalResponse.ok ? "sent" : "failed",
     onesignal_notification_id: notificationId,
-    error_message: oneSignalResponse.ok ? null : JSON.stringify(oneSignalResult),
+    error_message: oneSignalResponse.ok
+      ? null
+      : formatOneSignalError(oneSignalResponse.status, oneSignalResult),
     sent_at: oneSignalResponse.ok ? new Date().toISOString() : null,
     })
     .eq("id", campaign.id);

@@ -1,175 +1,102 @@
-# IMAGE_UPLOAD_OPTIMIZATION.md
+# Segurança e processamento de uploads
 
 **Projeto:** app-big-pwa
-**Data:** 2026-06-29
-**Arquivo de referência:** `app/api/admin/upload/route.ts`
+
+**Atualizado em:** 2026-09-01
+
+**Arquivos de referência:** `app/api/admin/upload/route.ts` e
+`lib/upload-security.server.ts`
 
 ---
 
 ## Objetivo
 
-Otimizar automaticamente imagens enviadas pelo painel admin antes de enviá-las ao Supabase Storage, eliminando a necessidade de compressão manual pelo operador.
+O endpoint administrativo aceita somente imagens raster realmente suportadas,
+valida o conteúdo antes de gravá-lo e processa todo arquivo aceito com Sharp.
+Nenhum arquivo fornecido pelo cliente é armazenado diretamente.
 
----
+## Kinds permitidos
 
-## Escopo
+O conjunto é fechado e tipado:
 
-### Kinds com otimização ativa
+| Kind | Limite do arquivo de entrada e da saída | Processamento | Saída |
+|---|---:|---|---|
+| `logo` | 500 KB | largura máxima de 800 px, sem ampliar | PNG |
+| `favicon` | 100 KB | 32x32, `contain`, fundo transparente | PNG |
+| `icon192` | 300 KB | 192x192, `contain`, fundo transparente | PNG |
+| `icon512` | 500 KB | 512x512, `contain`, fundo transparente | PNG |
+| `splash` | 1 MB | decodificação e reencode, sem resize | preserva PNG/JPEG/WEBP |
 
-| Kind | Dimensão de saída | Fit | Fundo | Formato de saída |
-|---|---|---|---|---|
-| `icon512` | 512×512 | `contain` | transparente | PNG |
-| `icon192` | 192×192 | `contain` | transparente | PNG |
-| `favicon` | 32×32 | `contain` | transparente | PNG |
-| `logo` | max 800px largura | `inside` + sem ampliar | — | PNG |
+Qualquer outro valor, inclusive vazio, `asset`, `splashHtml`, traversal ou
+prefixo arbitrário, retorna HTTP 400. O `kind` só chega ao path do Storage
+depois dessa validação.
 
-### Kinds sem otimização (passam como estão)
+## Formatos
 
-| Kind | Motivo |
-|---|---|
-| `splash` | Excluído desta fase — pode ser adicionado futuramente |
-| `splashHtml` | Arquivo HTML — não é imagem |
+São aceitos somente:
 
-### Formatos que bypassam o sharp
+- PNG com assinatura PNG, extensão `.png` e MIME `image/png`;
+- JPEG com assinatura JPEG, extensão `.jpg` ou `.jpeg` e MIME `image/jpeg`;
+- WEBP com container RIFF/WEBP, extensão `.webp` e MIME `image/webp`.
 
-| Extensão | Motivo |
-|---|---|
-| `.svg` | Formato vetorial — sharp não produz SVG |
-| `.ico` | Formato container — sharp não produz ICO |
+Extensão, MIME declarado e assinatura precisam concordar. Depois disso, Sharp
+precisa decodificar e regravar a imagem por completo. Falha de decode,
+truncamento, corrupção, imagem acima de 40 milhões de pixels ou saída acima do
+limite são rejeitados. Não existe fallback para os bytes originais.
 
-Esses formatos passam pela validação de tamanho original normalmente.
+SVG, HTML, GIF e ICO são reconhecidos pela inspeção inicial apenas para serem
+rejeitados. SVG e ICO não possuem uso ativo entre os assets configurados dos
+seis tenants; GIF nunca fez parte do fluxo suportado.
 
----
+## Splash HTML legado
 
-## Pipeline de processamento
+Novos uploads HTML estão desativados no endpoint e na interface. BigPix e
+MegaBingo7 ainda possuem splash HTML legado ativo, com scripts e animações, por
+isso os URLs existentes continuam sendo consumidos sob o sandbox já endurecido
+em C-2. O salvamento de settings aceita somente preservar exatamente o URL
+tenant-scoped já gravado ou removê-lo; um URL HTML novo retorna HTTP 400.
 
-```
+## Pipeline
+
+```text
 POST /api/admin/upload
-  │
-  ├─ Validação de autenticação
-  ├─ Validação de extensão / MIME type (inalterada)
-  │
-  ├─ [se kind ∈ {icon512, icon192, favicon, logo} e não SVG/ICO]
-  │     └─ sharp: redimensionar + converter para PNG otimizado
-  │           compressionLevel: 9, adaptiveFiltering: true
-  │
-  ├─ Validação de tamanho (sobre buffer otimizado, se aplicável)
-  │     └─ se ainda exceder o limite → HTTP 400 com mensagem específica
-  │
-  ├─ Upload para Supabase Storage
-  └─ Retorno JSON com metadados de otimização
+  -> requireTenantAccess()
+  -> Content-Length global <= 1 MB + 64 KB de overhead
+  -> Content-Type multipart/form-data
+  -> request.formData()
+  -> kind na whitelist fechada
+  -> File presente e tamanho bruto <= limite do kind
+  -> arrayBuffer()
+  -> assinatura real + extensão + MIME coerentes
+  -> Sharp: decode completo + resize/reencode
+  -> tamanho processado <= limite do kind
+  -> path gerado com kind validado, timestamp, UUID e nome normalizado
+  -> Blob binário -> bucket app-assets
+  -> getPublicUrl(path)
 ```
 
----
+O limite por `Content-Length` impede que requests obviamente grandes cheguem a
+`request.formData()`. Se o header estiver ausente ou declarar um tamanho menor
+que o corpo real, o runtime do Next ainda materializa o multipart antes de o
+código conseguir validar `File.size`. Corrigir integralmente essa limitação
+exigiria um parser multipart streaming e foi deliberadamente evitado nesta
+etapa para não introduzir uma refatoração complexa.
 
-## Configuração do sharp
+## Storage
 
-```typescript
-// PNG máxima compressão sem perda de qualidade
-const pngOptions = { compressionLevel: 9, adaptiveFiltering: true };
+Esta remediação não altera bucket, `public`, `file_size_limit`,
+`allowed_mime_types`, policies ou grants. O upload continua com
+`cacheControl: 31536000`, `upsert: false` e gera a URL pública pelo mesmo
+`getPublicUrl(path)`.
 
-// icon512 / icon192 / favicon
-sharp(input)
-  .resize(W, H, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
-  .png(pngOptions)
+## Dependências
 
-// logo
-sharp(input)
-  .resize(800, undefined, { fit: "inside", withoutEnlargement: true })
-  .png(pngOptions)
-```
-
----
-
-## Resposta JSON
-
-### Quando otimizado
-
-```json
-{
-  "ok": true,
-  "url": "https://...",
-  "path": "icon512/...",
-  "originalSizeKb": 234,
-  "optimizedSizeKb": 45,
-  "optimized": true,
-  "width": 512,
-  "height": 512
-}
-```
-
-### Quando não otimizado (SVG, ICO, splash, splashHtml)
-
-```json
-{
-  "ok": true,
-  "url": "https://...",
-  "path": "splash/...",
-  "originalSizeKb": 180,
-  "optimizedSizeKb": 180,
-  "optimized": false,
-  "width": null,
-  "height": null
-}
-```
-
-### Quando excede o limite após otimização
-
-```json
-{
-  "ok": false,
-  "error": "Imagem otimizada ainda excede o limite de 500 KB."
-}
-```
-
----
-
-## Limites de tamanho (após otimização)
-
-| Kind | Limite |
-|---|---|
-| `logo` | 500 KB |
-| `favicon` | 100 KB |
-| `icon192` | 300 KB |
-| `icon512` | 500 KB |
-| `splash` | 1 MB |
-| `splashHtml` | 500 KB |
-
----
-
-## Dependência
-
-- **Pacote:** `sharp` (instalado em `dependencies`)
-- **Runtime:** Node.js — funciona em Vercel Fluid Compute (sem edge runtime)
-- **Versão mínima testada:** 0.34.x
-
----
-
-## Comportamento de fallback
-
-Se o `sharp` lançar exceção durante o processamento (ex: arquivo corrompido), a rota faz fallback para o buffer original sem otimização e prossegue com a validação de tamanho normal. O erro é logado com `console.error`.
-
----
+Nenhuma dependência foi adicionada. O Sharp direto já existente (`^0.35.2`) faz
+o decode e reencode; as assinaturas do conjunto pequeno e fechado são validadas
+por código local explícito.
 
 ## Rollback
 
-Remover o import de `sharp`, restaurar a rota original (sem pipeline de otimização) e desinstalar o pacote:
-
-```bash
-npm uninstall sharp
-```
-
-O arquivo de rollback de referência é o commit anterior a este.
-
----
-
-## O que não muda
-
-- Validação de extensão e MIME type
-- Fluxo de autenticação
-- Lógica de `splashHtml`
-- Nomes de campos no formulário admin
-- Schema SQL
-- Service Worker
-- OneSignal
-- tenant_domain
+Reverter em conjunto a rota, o helper, a proteção de `splashHtmlUrl`, a
+interface e os testes desta etapa. Não há migration nem mudança de dados para
+desfazer.
