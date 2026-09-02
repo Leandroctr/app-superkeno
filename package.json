@@ -21,7 +21,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "2.108.2",
-    "next": "16.2.11",
+    "next": "16.3.4",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-onesignal": "^3.5.6",
