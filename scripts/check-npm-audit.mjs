@@ -32,7 +32,7 @@ export function evaluateAuditReport(report) {
   return {
     ...normalized,
     total,
-    blocksCi: normalized.critical > 0,
+    blocksCi: normalized.high > 0 || normalized.critical > 0,
   };
 }
 
@@ -50,7 +50,9 @@ async function main() {
   );
 
   if (summary.blocksCi) {
-    console.error("[npm-audit] blocked: at least one critical vulnerability");
+    console.error(
+      "[npm-audit] blocked: at least one high or critical vulnerability",
+    );
     process.exitCode = 1;
   }
 }

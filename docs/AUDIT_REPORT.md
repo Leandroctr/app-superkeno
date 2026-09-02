@@ -1110,9 +1110,9 @@ upload-security, push-hardening, schema-baseline e politica de CI.
 O build usa somente valores ficticios sob dominios `.invalid`. Suites `:real`
 nao rodam no CI inicial e nenhum secret Supabase/OneSignal e declarado.
 
-O audit sempre gera um JSON retido como artefato por 14 dias. A politica falha
-fechada se o relatorio for invalido/indisponivel e bloqueia qualquer
-vulnerabilidade `critical`. Findings `high` conhecidos permanecem visiveis mas
-nao bloqueiam enquanto o upgrade separado do Next estiver pendente; apos esse
-lote, a politica deve ser elevada para bloquear `high`.
+O audit sempre gera um JSON retido como artefato por 14 dias. Depois do upgrade
+validado para Next 16.3.4 eliminar os 3 findings high residuais, a politica
+falha fechada se o relatorio for invalido/indisponivel e bloqueia qualquer
+vulnerabilidade `high` ou `critical`. Findings `moderate` e `low` permanecem
+visiveis, mas nao bloqueiam nesta etapa.
 

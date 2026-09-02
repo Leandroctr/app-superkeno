@@ -53,10 +53,10 @@ branches `security/**`. O workflow usa Node.js `22.22.3`, cache oficial do npm,
 build recebe somente configuracao ficticia com dominios `.invalid`; nenhuma
 credencial Supabase ou OneSignal e usada.
 
-O `npm audit` gera um artefato JSON em toda execucao. A politica inicial falha
-quando existe vulnerabilidade `critical` ou quando o relatorio nao pode ser
-validado. Findings `high` conhecidos continuam visiveis no relatorio, mas so
-passarao a bloquear depois da decisao separada sobre a atualizacao do Next.
+O `npm audit` gera um artefato JSON em toda execucao. A politica falha quando
+existe vulnerabilidade `high` ou `critical`, ou quando o relatorio esta
+indisponivel ou nao pode ser validado. Findings `moderate` e `low` continuam
+visiveis no relatorio, mas nao bloqueiam nesta etapa.
 
 ## Status atual
 
