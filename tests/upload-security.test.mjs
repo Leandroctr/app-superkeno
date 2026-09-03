@@ -6,6 +6,7 @@ import test from "node:test";
 import sharp from "sharp";
 
 import { resolveLegacySplashHtmlUrl } from "../lib/admin-settings-payload.ts";
+import { parseMultipartUpload } from "../lib/multipart-upload.server.ts";
 import {
   assertUploadRequestSize,
   buildStoragePath,
@@ -18,11 +19,17 @@ import {
 
 const routeSource = readFileSync("app/api/admin/upload/route.ts", "utf8");
 const helperSource = readFileSync("lib/upload-security.server.ts", "utf8");
+const multipartHelperSource = readFileSync(
+  "lib/multipart-upload.server.ts",
+  "utf8",
+);
 const formSource = readFileSync("components/admin-settings-form.tsx", "utf8");
 
 function rejectsWithCode(code) {
   return (error) => {
-    assert.equal(error?.name, "UploadValidationError");
+    assert.ok(
+      ["UploadValidationError", "MultipartUploadError"].includes(error?.name),
+    );
     assert.equal(error?.code, code);
     return true;
   };
@@ -48,6 +55,50 @@ async function makeImageFile(format, name, type) {
 
   const buffer = await pipeline.toBuffer();
   return new File([buffer], name, { type });
+}
+
+function buildMultipartBody({ boundary, fields = [], files = [], close = true }) {
+  const chunks = [];
+
+  for (const { name, value } of fields) {
+    chunks.push(
+      Buffer.from(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
+          `${value}\r\n`,
+      ),
+    );
+  }
+
+  for (const { name, filename, type, data } of files) {
+    chunks.push(
+      Buffer.from(
+        `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="${name}"; filename="${filename}"\r\n` +
+          `Content-Type: ${type}\r\n\r\n`,
+      ),
+      Buffer.from(data),
+      Buffer.from("\r\n"),
+    );
+  }
+
+  if (close) {
+    chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function multipartRequest(body, boundary, extraHeaders = {}) {
+  return new Request("https://upload.invalid/api/admin/upload", {
+    method: "POST",
+    headers: {
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+      ...extraHeaders,
+    },
+    body,
+    duplex: "half",
+  });
 }
 
 test("M-3 accepts only the five supported typed kinds", () => {
@@ -89,8 +140,213 @@ test("M-6 rejects an excessive Content-Length before multipart parsing", () => {
   );
 
   const guardPosition = routeSource.indexOf("assertUploadRequestSize(");
-  const parserPosition = routeSource.indexOf("await request.formData()");
+  const parserPosition = routeSource.indexOf("await parseMultipartUpload(");
   assert.ok(guardPosition >= 0 && parserPosition > guardPosition);
+  assert.doesNotMatch(routeSource, /request\.formData\(\)/);
+});
+
+test("M-6 parses a valid small upload without request.formData", async () => {
+  const boundary = "cetec-valid-upload";
+  const image = await makeImageFile("png", "logo.png", "image/png");
+  const body = buildMultipartBody({
+    boundary,
+    fields: [{ name: "kind", value: "logo" }],
+    files: [
+      {
+        name: "file",
+        filename: image.name,
+        type: image.type,
+        data: Buffer.from(await image.arrayBuffer()),
+      },
+    ],
+  });
+
+  const parsed = await parseMultipartUpload(
+    multipartRequest(body, boundary),
+    MAX_UPLOAD_REQUEST_BYTES,
+  );
+  const prepared = await prepareImageUpload(
+    parsed.file,
+    parseUploadKind(parsed.kind),
+  );
+
+  assert.equal(parsed.kind, "logo");
+  assert.equal(parsed.file.name, "logo.png");
+  assert.equal(parsed.file.type, "image/png");
+  assert.equal(detectUploadType(prepared.buffer), "png");
+});
+
+test("M-6 does not read the body when declared Content-Length is excessive", async () => {
+  const boundary = "cetec-known-oversize";
+  let pulls = 0;
+  const stream = new ReadableStream(
+    {
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array([1]));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+  await assert.rejects(
+    () =>
+      parseMultipartUpload(
+        multipartRequest(stream, boundary, {
+          "content-length": String(MAX_UPLOAD_REQUEST_BYTES + 1),
+        }),
+        MAX_UPLOAD_REQUEST_BYTES,
+      ),
+    rejectsWithCode("request_too_large"),
+  );
+  assert.equal(pulls, 0);
+});
+
+test("M-6 cancels an unknown-length stream at the first over-limit chunk", async () => {
+  const boundary = "cetec-streaming-limit";
+  const prefix = buildMultipartBody({
+    boundary,
+    fields: [{ name: "kind", value: "splash" }],
+    files: [
+      {
+        name: "file",
+        filename: "large.png",
+        type: "image/png",
+        data: Buffer.alloc(0),
+      },
+    ],
+    close: false,
+  });
+  const payloadChunk = Buffer.alloc(64 * 1024, 0x61);
+  const availablePayloadChunks = 40;
+  const firstOverLimitPayloadChunk =
+    Math.floor(
+      (MAX_UPLOAD_REQUEST_BYTES - prefix.length) / payloadChunk.length,
+    ) + 1;
+  let pulls = 0;
+  let cancelled = false;
+  let cancelReason;
+
+  const stream = new ReadableStream(
+    {
+      pull(controller) {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(prefix);
+          return;
+        }
+
+        if (pulls <= availablePayloadChunks + 1) {
+          controller.enqueue(payloadChunk);
+          return;
+        }
+
+        controller.close();
+      },
+      cancel(reason) {
+        cancelled = true;
+        cancelReason = reason;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
+  await assert.rejects(
+    () =>
+      parseMultipartUpload(
+        multipartRequest(stream, boundary),
+        MAX_UPLOAD_REQUEST_BYTES,
+      ),
+    rejectsWithCode("request_too_large"),
+  );
+
+  assert.equal(pulls, firstOverLimitPayloadChunk + 1);
+  assert.ok(pulls < availablePayloadChunks + 1);
+  assert.equal(cancelled, true);
+  assert.equal(cancelReason?.code, "request_too_large");
+});
+
+test("M-6 rejects malformed multipart bodies", async () => {
+  const boundary = "cetec-malformed";
+  const body = buildMultipartBody({
+    boundary,
+    fields: [{ name: "kind", value: "logo" }],
+    files: [
+      {
+        name: "file",
+        filename: "logo.png",
+        type: "image/png",
+        data: Buffer.from("incomplete"),
+      },
+    ],
+    close: false,
+  });
+
+  await assert.rejects(
+    () =>
+      parseMultipartUpload(
+        multipartRequest(body, boundary),
+        MAX_UPLOAD_REQUEST_BYTES,
+      ),
+    rejectsWithCode("invalid_multipart"),
+  );
+});
+
+test("M-6 rejects multiple files and unexpected multipart fields", async () => {
+  const boundary = "cetec-multiple-files";
+  const body = buildMultipartBody({
+    boundary,
+    fields: [{ name: "kind", value: "logo" }],
+    files: [
+      {
+        name: "file",
+        filename: "one.png",
+        type: "image/png",
+        data: Buffer.from("one"),
+      },
+      {
+        name: "file",
+        filename: "two.png",
+        type: "image/png",
+        data: Buffer.from("two"),
+      },
+    ],
+  });
+
+  await assert.rejects(
+    () =>
+      parseMultipartUpload(
+        multipartRequest(body, boundary),
+        MAX_UPLOAD_REQUEST_BYTES,
+      ),
+    rejectsWithCode("invalid_multipart"),
+  );
+
+  const unexpectedBoundary = "cetec-unexpected-field";
+  const unexpectedBody = buildMultipartBody({
+    boundary: unexpectedBoundary,
+    fields: [
+      { name: "kind", value: "logo" },
+      { name: "extra", value: "not-allowed" },
+    ],
+    files: [
+      {
+        name: "file",
+        filename: "logo.png",
+        type: "image/png",
+        data: Buffer.from("data"),
+      },
+    ],
+  });
+
+  await assert.rejects(
+    () =>
+      parseMultipartUpload(
+        multipartRequest(unexpectedBody, unexpectedBoundary),
+        MAX_UPLOAD_REQUEST_BYTES,
+      ),
+    rejectsWithCode("invalid_multipart"),
+  );
 });
 
 test("M-6 rejects a file above the kind limit before arrayBuffer", async () => {
@@ -237,9 +493,9 @@ test("storage path is restricted to the validated kind and normalized extension"
   );
 });
 
-test("route keeps authentication before parsing and blocks missing tenant access", () => {
+test("route keeps authentication before streaming parsing and blocks missing tenant access", () => {
   const authPosition = routeSource.indexOf("await requireTenantAccess()");
-  const parserPosition = routeSource.indexOf("await request.formData()");
+  const parserPosition = routeSource.indexOf("await parseMultipartUpload(");
 
   assert.ok(authPosition >= 0 && parserPosition > authPosition);
   assert.match(routeSource, /if \(!currentAdmin\)/);
@@ -255,7 +511,7 @@ test("successful storage flow uses only the prepared path and keeps public URL g
 });
 
 test("failure paths use memory only and cannot leave temporary files", () => {
-  const combinedSource = `${routeSource}\n${helperSource}`;
+  const combinedSource = `${routeSource}\n${helperSource}\n${multipartHelperSource}`;
 
   assert.doesNotMatch(combinedSource, /node:fs|from ["']fs["']|writeFile|mkdtemp|tmpdir/);
   assert.match(routeSource, /new Blob\(\[Uint8Array\.from\(prepared\.buffer\)\]/);

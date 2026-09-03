@@ -3,8 +3,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import { logServerError } from "@/lib/logger/server";
 import {
+  MultipartUploadError,
+  parseMultipartUpload,
+} from "@/lib/multipart-upload.server";
+import {
   assertUploadRequestSize,
   buildStoragePath,
+  MAX_UPLOAD_REQUEST_BYTES,
   parseUploadKind,
   prepareImageUpload,
   UploadValidationError,
@@ -12,7 +17,9 @@ import {
 
 const bucketName = "app-assets";
 
-function validationErrorResponse(error: UploadValidationError) {
+function validationErrorResponse(
+  error: UploadValidationError | MultipartUploadError,
+) {
   return NextResponse.json(
     { ok: false, error: error.message, code: error.code },
     { status: error.status },
@@ -57,27 +64,26 @@ export async function POST(request: Request) {
     );
   }
 
-  let formData: FormData;
-
+  let multipart;
   try {
-    formData = await request.formData();
-  } catch {
+    multipart = await parseMultipartUpload(request, MAX_UPLOAD_REQUEST_BYTES);
+  } catch (error) {
+    if (
+      error instanceof UploadValidationError ||
+      error instanceof MultipartUploadError
+    ) {
+      return validationErrorResponse(error);
+    }
+
     return NextResponse.json(
       { ok: false, error: "Formulario multipart invalido." },
       { status: 400 },
     );
   }
 
-  const file = formData.get("file");
-
-  if (!(file instanceof File)) {
-    return validationErrorResponse(
-      new UploadValidationError("missing_file", "Arquivo nao enviado."),
-    );
-  }
-
   try {
-    const kind = parseUploadKind(formData.get("kind"));
+    const kind = parseUploadKind(multipart.kind);
+    const file = multipart.file;
     const prepared = await prepareImageUpload(file, kind);
     const path = buildStoragePath(
       kind,
