@@ -4,15 +4,23 @@ import { pathToFileURL } from "node:url";
 const SEVERITIES = ["info", "low", "moderate", "high", "critical"];
 
 export function evaluateAuditReport(report) {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    throw new Error("npm audit report must be an object");
+  }
+
   const counts = report?.metadata?.vulnerabilities;
 
-  if (!counts || typeof counts !== "object") {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
     throw new Error("npm audit report is missing vulnerability metadata");
   }
 
   const normalized = {};
   for (const severity of SEVERITIES) {
-    const value = counts[severity] ?? 0;
+    if (!Object.hasOwn(counts, severity)) {
+      throw new Error(`npm audit report is missing the ${severity} count`);
+    }
+
+    const value = counts[severity];
     if (!Number.isInteger(value) || value < 0) {
       throw new Error(`npm audit report has an invalid ${severity} count`);
     }
@@ -23,10 +31,18 @@ export function evaluateAuditReport(report) {
     (total, severity) => total + normalized[severity],
     0,
   );
-  const total = counts.total ?? calculatedTotal;
+  if (!Object.hasOwn(counts, "total")) {
+    throw new Error("npm audit report is missing the total count");
+  }
+
+  const total = counts.total;
 
   if (!Number.isInteger(total) || total < 0) {
     throw new Error("npm audit report has an invalid total count");
+  }
+
+  if (total !== calculatedTotal) {
+    throw new Error("npm audit report total does not match severity counts");
   }
 
   return {

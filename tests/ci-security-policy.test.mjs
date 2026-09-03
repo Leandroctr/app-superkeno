@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { evaluateAuditReport } from "../scripts/check-npm-audit.mjs";
@@ -97,10 +100,15 @@ test("audit policy keeps low findings visible without blocking", () => {
 });
 
 test("audit policy keeps moderate findings visible without blocking", () => {
-  const summary = evaluateAuditReport(createAuditReport({ moderate: 1 }));
+  const summary = evaluateAuditReport(
+    createAuditReport({ low: 2, moderate: 1 }),
+  );
 
   assert.equal(summary.blocksCi, false);
+  assert.equal(summary.low, 2);
   assert.equal(summary.moderate, 1);
+  assert.equal(summary.high, 0);
+  assert.equal(summary.critical, 0);
 });
 
 test("audit policy blocks any high finding", () => {
@@ -118,6 +126,67 @@ test("audit policy blocks any critical finding", () => {
 
 test("audit policy fails closed for malformed reports", () => {
   assert.throws(() => evaluateAuditReport({ error: "registry unavailable" }));
+});
+
+test("audit policy fails closed for invalid JSON", () => {
+  const directory = mkdtempSync(join(tmpdir(), "npm-audit-policy-"));
+  const reportPath = join(directory, "invalid.json");
+
+  try {
+    writeFileSync(reportPath, "{not-json", "utf8");
+    const result = spawnSync(process.execPath, [auditScript, reportPath], {
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /invalid or unavailable report/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("audit policy requires metadata and vulnerability counts", () => {
+  assert.throws(() => evaluateAuditReport({}));
+  assert.throws(() => evaluateAuditReport({ metadata: {} }));
+});
+
+test("audit policy requires every severity count", () => {
+  for (const severity of ["info", "low", "moderate", "high", "critical"]) {
+    const report = createAuditReport();
+    delete report.metadata.vulnerabilities[severity];
+
+    assert.throws(
+      () => evaluateAuditReport(report),
+      new RegExp(`missing the ${severity} count`),
+    );
+  }
+});
+
+test("audit policy rejects non-numeric and negative severity counts", () => {
+  assert.throws(() =>
+    evaluateAuditReport(createAuditReport({ high: "0" })),
+  );
+  assert.throws(() =>
+    evaluateAuditReport(createAuditReport({ moderate: -1 })),
+  );
+});
+
+test("audit policy requires a valid and consistent total", () => {
+  const missingTotal = createAuditReport();
+  delete missingTotal.metadata.vulnerabilities.total;
+
+  assert.throws(() => evaluateAuditReport(missingTotal), /missing the total/);
+
+  const nonNumericTotal = createAuditReport();
+  nonNumericTotal.metadata.vulnerabilities.total = "0";
+  assert.throws(() => evaluateAuditReport(nonNumericTotal), /invalid total/);
+
+  const inconsistentTotal = createAuditReport({ low: 1 });
+  inconsistentTotal.metadata.vulnerabilities.total = 0;
+  assert.throws(
+    () => evaluateAuditReport(inconsistentTotal),
+    /does not match severity counts/,
+  );
 });
 
 test("audit policy fails closed when the report is unavailable", () => {
