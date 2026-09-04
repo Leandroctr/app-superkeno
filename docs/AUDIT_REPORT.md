@@ -11,6 +11,17 @@
 
 ## 1. Resumo Executivo
 
+**Atualização 2026-09-03 — fechamento CETEC:** a remediação CETEC de código está
+**CONCLUÍDA** nos seis PWAs. **Pendências técnicas CETEC abertas: 0.** Next.js está
+em `16.3.4`, React e React DOM em `19.2.7`, nenhuma dependência direta usa `latest`
+e o `npm audit` reporta 0 critical, 0 high, 0 moderate e 0 low. M-5, M-6 e M-8 estão
+resolvidos. O que resta não é código faltante, e sim validação futura/externa:
+aplicar o baseline `supabase/schema.sql` em um Supabase novo e descartável, a
+validação operacional em navegador/staging e a autorização externa para o retorno
+dos PWAs. Ver seção 18. As seções 9 a 17 são registro histórico datado e foram
+preservadas como estavam; onde descrevem estado intermediário, a seção 18 é a
+referência atual.
+
 **Atualização 2026-07-02:** o bloqueio crítico descrito abaixo foi resolvido. Leitura
 direta do banco compartilhado confirmou que a migration `002` já foi executada — a
 coluna `tenant_domain` existe e as 4 linhas de `app_settings` (Big Pix, MegaBingo7,
@@ -807,6 +818,12 @@ criptográfica absoluta de posse do `onesignal_id` continua não oferecida pelo
 modelo do OneSignal e permanece registrada como risco residual; por isso A-5
 não é declarado integralmente encerrado.
 
+> **Atualização 2026-09-03:** no fechamento CETEC, A-5 é considerado
+> **RESOLVIDO**. O risco residual acima não é código faltante nem pendência
+> CETEC: ele decorre do modelo de identidade do OneSignal, que não oferece prova
+> criptográfica de posse do `onesignal_id`. Segue registrado como risco aceito,
+> fora do escopo de remediação. Ver seção 18.
+
 ---
 
 ## 14. Remediação de uploads A-4, M-3, M-4 e M-6 — 2026-09-01
@@ -873,7 +890,12 @@ Foi removido o fallback inseguro que gravava o original após erro.
 O `icon512` malformado do MegaBingo7 é legado já publicado e não foi modificado;
 o novo pipeline rejeitaria seu conteúdo em um futuro reupload.
 
-### M-6 — PARCIALMENTE RESOLVIDO
+### M-6 — PARCIALMENTE RESOLVIDO nesta etapa (2026-09-01)
+
+> **Superado em 2026-09-03: M-6 hoje está RESOLVIDO.** A limitação residual
+> descrita abaixo foi fechada com parser multipart por streaming (`busboy`), sem
+> `request.formData()` na rota. Ver seção 18. O texto abaixo é mantido como
+> registro do estado daquela etapa.
 
 Requests cujo `Content-Length` excede 1 MB mais 64 KB de overhead são rejeitados
 com 413 antes de `request.formData()`. Depois do parsing, `File.size` é validado
@@ -1059,7 +1081,12 @@ staging vazio.
 Esta etapa foi executada nos worktrees de seguranca, com os ambientes
 desconectados. Nao houve SQL, alteracao de Supabase, push Git ou deploy.
 
-### M-5 — PARCIALMENTE RESOLVIDO
+### M-5 — PARCIALMENTE RESOLVIDO nesta etapa (2026-09-01)
+
+> **Superado em 2026-09-03: M-5 hoje está RESOLVIDO.** O Next foi atualizado para
+> `16.3.4` e o `npm audit` passou a reportar 0 critical, 0 high, 0 moderate e 0
+> low. Ver seção 18. O texto abaixo é mantido como registro do estado daquela
+> etapa.
 
 As 12 dependencias diretas declaradas como `latest` passaram a usar versoes
 explicitas. Bibliotecas de runtime sem advisory foram fixadas na versao ja
@@ -1092,7 +1119,7 @@ Inventario dos advisories e aplicabilidade:
 Resultado final do audit neste lote: 3 entradas agregadas high, 0 moderate e
 0 critical. Nao foi usado `npm audit fix` nem `overrides`.
 
-O Next permanece em 16.2.11. Essa versao fixa internamente PostCSS 8.4.31 e
+Nesta etapa o Next permaneceu em 16.2.11. Essa versao fixa internamente PostCSS 8.4.31 e
 Sharp 0.34.5, portanto as entradas agregadas `next`, `postcss` e `sharp`
 continuam no audit. A correcao indicada pelo registry e Next 16.3.4, que troca
 essas dependencias por PostCSS 8.5.23 e Sharp `^0.35.4`. Como 16.3.4 e um minor
@@ -1116,3 +1143,104 @@ falha fechada se o relatorio for invalido/indisponivel e bloqueia qualquer
 vulnerabilidade `high` ou `critical`. Findings `moderate` e `low` permanecem
 visiveis, mas nao bloqueiam nesta etapa.
 
+---
+
+## 18. Fechamento da remediação CETEC — 2026-09-03
+
+**Estado: remediação CETEC de código CONCLUÍDA. Pendências técnicas CETEC
+abertas: 0.**
+
+Esta seção consolida o estado técnico atual, já validado localmente nos seis
+PWAs. Ela não executou SQL nem alterou Supabase, Vercel, OneSignal, código ou
+configuração: é o registro documental do fechamento. As seções 9 a 17 permanecem
+como registro histórico datado; onde elas descrevem estado intermediário, esta
+seção é a referência atual.
+
+### Dependências e npm audit — M-5 RESOLVIDO
+
+- Next.js `16.3.4`, React `19.2.7` e React DOM `19.2.7`, com versões exatas.
+- Nenhuma dependência direta declarada como `latest`.
+- `npm audit`: **0 critical, 0 high, 0 moderate e 0 low.** As entradas agregadas
+  `next`, `postcss` e `sharp`, residuais em 2026-09-01, desapareceram com o
+  upgrade — o Next 16.3.4 passa a depender de PostCSS e Sharp corrigidos.
+- Não foi usado `npm audit fix` nem `overrides`.
+
+A política de CI é fail-closed por completo:
+
+- finding `high` bloqueia;
+- finding `critical` bloqueia;
+- findings `low` e `moderate` permanecem visíveis e não bloqueiam;
+- relatório inválido, incompleto ou indisponível falha fechado;
+- `info`, `low`, `moderate`, `high`, `critical` e `total` são campos
+  obrigatórios;
+- todos precisam ser inteiros não negativos;
+- `total` precisa corresponder à soma das severidades.
+
+`tests/ci-security-policy.test.mjs`: **15/15**.
+
+### M-6 — RESOLVIDO
+
+A limitação residual registrada na seção 14 foi fechada:
+
+- `request.formData()` não é mais usado na rota de upload;
+- o multipart é processado por streaming em `lib/multipart-upload.server.ts`,
+  com `busboy` 1.6.0 e `@types/busboy` 1.5.4;
+- `Content-Length` acima do limite é rejeitado antecipadamente, antes de ler o
+  corpo;
+- sem `Content-Length` confiável, os bytes são contados durante a leitura;
+- ao ultrapassar `MAX_UPLOAD_REQUEST_BYTES` o stream é cancelado, o parser é
+  interrompido e o restante do corpo não é consumido;
+- multipart malformado é rejeitado;
+- múltiplos arquivos ou campos inesperados são rejeitados;
+- MIME declarado, extensão, assinatura real e limites por kind continuam
+  validados;
+- autenticação e isolamento por tenant continuam aplicados antes do parsing;
+- o Storage não recebe arquivo acima do limite.
+
+Existe teste específico provando que o stream deixa de consumir chunks depois de
+detectar o excesso. `tests/upload-security.test.mjs`: **22/22**.
+
+### M-8 — RESOLVIDO no baseline versionado
+
+`supabase/schema.sql` representa o baseline completo e tenant-neutral, incluindo
+`tenant_domain`, tabelas administrativas, isolamento por tenant,
+`push_campaigns`, rate limiter/RPCs, RLS, grants/revokes, bucket `app-assets` e
+ausência de seed tenant-specific. `test:schema-baseline`: **8/8**.
+
+Este baseline **não** foi reconstruído em um projeto Supabase novo. Aplicá-lo em
+um Supabase novo e descartável continua sendo validação futura, listada abaixo.
+
+### Demais controles
+
+| Controle | Estado |
+|---|---|
+| A-1/A-3 / autenticação administrativa | RESOLVIDO |
+| A-5 / proteção de `/api/push/subscribe` | RESOLVIDO |
+| Push hardening (B-2, B-3, B-4) | RESOLVIDO |
+| Upload autenticado | RESOLVIDO |
+| Isolamento por tenant | RESOLVIDO |
+| RLS | RESOLVIDO |
+| Rate limiting | RESOLVIDO |
+| M-5 / dependências e CI | RESOLVIDO |
+| M-6 / upload por streaming | RESOLVIDO |
+| M-8 / baseline de schema | RESOLVIDO no repositório versionado |
+
+### Suítes estáticas neste repositório
+
+CETEC P1 8/8, auth 10/10, A-5 7/7, upload-security 22/22, push-hardening 8/8,
+schema-baseline 8/8 e política de CI 15/15.
+
+### Validações futuras / externas
+
+Não são código faltante e não contam como pendência CETEC:
+
+- **DEFERRED —** aplicar `supabase/schema.sql` em um projeto Supabase novo e
+  descartável (staging) e conferir as invariantes de segurança na prática;
+- **DEFERRED —** validação operacional em navegador/staging;
+- **EXTERNAL —** autorização externa para o retorno dos PWAs.
+
+### Fora do escopo CETEC
+
+M-7/`admin_audit_log`, melhorias P3/P4, modal de instalação, Service Worker
+legado e a futura unificação do App ID permanecem classificados fora deste lote
+e não são pendências CETEC.

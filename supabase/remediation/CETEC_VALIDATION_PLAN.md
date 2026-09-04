@@ -4,6 +4,24 @@
 **Status:** remediação executada e validada em 2026-08-31
 **Banco:** Supabase compartilhado pelos PWAs de referência
 
+## Status atual — 2026-09-03
+
+A remediação CETEC de código está **CONCLUÍDA**. **Pendências técnicas CETEC
+abertas: 0.** O fluxo autenticado de `/api/admin/upload`, registrado como
+pendente na evidência de 2026-08-31 abaixo, foi fechado nas etapas posteriores —
+ver `docs/AUDIT_REPORT.md`, seções 14 e 18.
+
+Continuam em aberto apenas validações futuras/externas, que não são código
+faltante:
+
+- **DEFERRED:** aplicar `supabase/schema.sql` em um projeto Supabase novo e
+  descartável (staging) e conferir as invariantes na prática;
+- **DEFERRED:** validação operacional em navegador/staging;
+- **EXTERNAL:** autorização externa para o retorno dos PWAs.
+
+As evidências e os procedimentos datados abaixo são registro histórico da janela
+de 2026-08-31 e não foram alterados.
+
 ## Evidências da execução de 2026-08-31
 
 - Snapshot de segurança: 13 itens (6 policies, 6 grants e 1 bucket).
@@ -116,6 +134,12 @@ Esperado para o bucket:
 
 Limites de tamanho e MIME ficam explicitamente fora desta correção P0/P1 e
 devem ser avaliados em etapa posterior de hardening.
+
+> **Etapa posterior já executada:** limite por kind, MIME declarado, extensão,
+> assinatura real do arquivo e limite de corpo por streaming passaram a ser
+> validados na rota de upload — ver `docs/AUDIT_REPORT.md`, seções 14 e 18. O
+> bucket em si permanece sem `file_size_limit`/`allowed_mime_types`, por decisão
+> registrada; a barreira é aplicada server-side antes do Storage.
 
 ### `/api/admin/upload`
 

@@ -136,15 +136,29 @@ Uma implementação não é considerada concluída enquanto a documentação nã
 
 ## Arquitetura atual
 
-O projeto opera em **multi-tenant por domínio** — settings identificados por `tenant_domain`, em um banco Supabase **compartilhado pelos 4 PWAs ativos** (tabela acima).
+O projeto opera em **multi-tenant por domínio** — settings identificados por `tenant_domain`, em um banco Supabase **compartilhado pelos 6 PWAs ativos** (tabela acima).
 
 > **Antes:** White label por deploy individual — settings identificados por `singleton_key` (coluna legada, mantida no banco sem uso no código).
 
 > **Agora:** confirmado em 2026-07-02, por leitura direta do banco compartilhado, que a migration `supabase/migrations/002_add_tenant_domain_to_app_settings.sql` já foi executada: a coluna `tenant_domain` existe e as 4 linhas de `app_settings` (Big Pix, MegaBingo7, Oba Prêmios, Prêmios ao Vivo) já têm valores distintos e corretos. O índice único em `tenant_domain` foi confirmado formalmente via SQL Editor em 2026-07-02 — nome real `app_settings_tenant_domain_idx` (diferente do `app_settings_tenant_domain_key` previsto no arquivo da migration, mas funcionalmente equivalente: `UNIQUE INDEX ... USING btree (tenant_domain)`), necessário para o `upsert` do painel admin funcionar — ver `docs/TENANT_DOMAIN_AUDIT.md`.
 >
-> **Pendência de baixo risco (não bloqueante):** `supabase/schema.sql` ainda não foi atualizado para incluir `tenant_domain` — a coluna existe em produção só porque a migration rodou diretamente no banco. Alinhar o schema base é recomendado, mas não é urgente.
+> **Baseline versionado (2026-09-01):** `supabase/schema.sql` foi alinhado como baseline completo e tenant-neutral — inclui `tenant_domain`, tabelas administrativas, isolamento por tenant, `push_campaigns`, rate limiter/RPCs, RLS, grants/revokes e o bucket `app-assets`, sem seed tenant-specific. Não há mais drift do arquivo a corrigir. Aplicar esse baseline em um projeto Supabase novo e descartável continua sendo validação futura — ver `docs/AUDIT_REPORT.md`, seções 16 e 18.
 
 Antes de qualquer desenvolvimento, ler: `docs/TENANT_DOMAIN_AUDIT.md`.
+
+### Estado da remediação CETEC (2026-09-03)
+
+A remediação CETEC de código está **CONCLUÍDA**. **Pendências técnicas CETEC abertas: 0.**
+
+Não reabrir nem repetir essas correções. O detalhamento está em `docs/AUDIT_REPORT.md`, seção 18.
+
+Permanecem fora do código, como validações futuras/externas — não são pendências CETEC:
+
+- **DEFERRED:** aplicar `supabase/schema.sql` em um projeto Supabase novo e descartável (staging);
+- **DEFERRED:** validação operacional em navegador/staging;
+- **EXTERNAL:** autorização externa para o retorno dos PWAs.
+
+Itens já classificados fora deste lote — M-7/`admin_audit_log`, melhorias P3/P4, modal de instalação, Service Worker legado e a futura unificação do App ID — também não são pendências CETEC.
 
 ---
 
