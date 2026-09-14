@@ -11,6 +11,12 @@
 
 ## 1. Resumo Executivo
 
+**Atualização 2026-09-14 — propagação local do MFA administrativo:** este
+repositório recebeu, em worktree isolado criado de `origin/main`, o núcleo MFA
+TOTP/AAL2 validado no BigPix. A alteração permanece somente em branch local,
+sem push, deploy, SQL ou mudança no Supabase. A seção 19 registra o desenho e
+os limites desta propagação.
+
 **Atualização 2026-09-03 — fechamento CETEC:** a remediação CETEC de código está
 **CONCLUÍDA** nos seis PWAs. **Pendências técnicas CETEC abertas: 0.** Next.js está
 em `16.3.4`, React e React DOM em `19.2.7`, nenhuma dependência direta usa `latest`
@@ -1244,3 +1250,40 @@ Não são código faltante e não contam como pendência CETEC:
 M-7/`admin_audit_log`, melhorias P3/P4, modal de instalação, Service Worker
 legado e a futura unificação do App ID permanecem classificados fora deste lote
 e não são pendências CETEC.
+
+---
+
+## 19. A-2 — MFA administrativo TOTP/AAL2 — 2026-09-14
+
+Este PWA recebeu o núcleo comum validado no BigPix para fechar A-2. O login por
+senha cria apenas uma sessão Supabase `aal1` e redireciona para `/admin/mfa`;
+senha, role e grant, isoladamente, não liberam painel nem API administrativa.
+
+`lib/admin-identity.server.ts` separa a identidade autenticada do enforcement
+forte. `getAdminPendingMfaForTenant()` valida `auth.getUser()`, linha ativa em
+`admin_users`, role válida e grant do tenant (ou `super_admin`), mas só pode ser
+usado pelo login e pelo fluxo MFA. `getCurrentAdmin()` falha fechado se a consulta
+do assurance level falhar ou se a sessão não tiver simultaneamente
+`currentLevel = aal2`, `nextLevel = aal2` e método atual `totp`.
+`requireTenantAccess()` e `requireSuperAdmin()` continuam herdando esse gate
+central, sem bypass por role.
+
+A rota `/admin/mfa` suporta enrollment quando não há fator TOTP verificado e
+challenge quando o fator já existe. Challenge, verify e uma confirmação final
+de AAL2 precedem o redirect para `/admin`. O segredo de enrollment permanece
+restrito à resposta e ao formulário MFA: não é persistido pela aplicação nem
+enviado a URL, analytics ou logs. Fatores verificados nunca são removidos
+automaticamente; somente enrollments TOTP abandonados e ainda `unverified`
+podem ser removidos antes de um novo enrollment.
+
+As superfícies `/admin`, `/admin/settings`, `/api/admin/settings`,
+`/api/admin/upload` e `/api/push/send` continuam protegidas pelos guards centrais
+e ficam bloqueadas em `aal1`. Permanecem fora do gate forte somente os fluxos
+públicos ou pré-acesso previstos: `/admin/login`, `/admin/mfa`,
+`/api/admin/logout`, `/api/settings` e `/api/push/subscribe`.
+
+Este PWA não recebeu `/admin/administradores`, `/admin/reset-password` nem APIs
+exclusivas do BigPix. A suíte real continua opt-in e usa apenas identidades
+descartáveis com teardown explícito; a propagação não repete enrollment com
+contas reais. Esta etapa não altera schema, RLS, grants, Supabase, Vercel,
+OneSignal, Service Worker ou variáveis de ambiente.

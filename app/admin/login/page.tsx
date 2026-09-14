@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { appConfig } from "@/lib/app-config";
-import { getAuthorizedAdminForTenant } from "@/lib/admin-identity.server";
+import { getAdminPendingMfaForTenant } from "@/lib/admin-identity.server";
 import { extractHostname } from "@/lib/app-settings";
 import { logServerInfo, logServerWarn } from "@/lib/logger/server";
 import { consumeRateLimits, resetRateLimit } from "@/lib/rate-limit.server";
@@ -35,7 +35,7 @@ async function tryLoginWithSupabaseAuth(
       return false;
     }
 
-    const admin = await getAuthorizedAdminForTenant(data.user.id, tenantDomain);
+    const admin = await getAdminPendingMfaForTenant();
 
     if (!admin) {
       await supabase.auth.signOut({ scope: "local" });
@@ -103,7 +103,7 @@ async function login(formData: FormData) {
 
   await resetRateLimit("admin_login_account", accountIdentifier);
   logServerInfo("admin_login_supabase_auth_ok", { tenantDomain });
-  redirect("/admin");
+  redirect("/admin/mfa");
 }
 
 export default async function AdminLoginPage({ searchParams }: LoginPageProps) {

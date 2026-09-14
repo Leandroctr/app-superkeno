@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
 import { createServerClient } from "@supabase/ssr";
@@ -9,7 +9,7 @@ import sharp from "sharp";
 const runRealTests = process.env.RUN_REAL_ADMIN_AUTH_TESTS === "1";
 
 if (!runRealTests) {
-  test("real A-1/A-3 integration suite", { skip: "set RUN_REAL_ADMIN_AUTH_TESTS=1" }, () => {});
+  test("real A-1/A-2/A-3 integration suite", { skip: "set RUN_REAL_ADMIN_AUTH_TESTS=1" }, () => {});
 } else {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -37,6 +37,41 @@ if (!runRealTests) {
   const createdStoragePaths = [];
   const identities = {};
   const sessions = {};
+  const factors = {};
+
+  function decodeBase32(value) {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    const normalized = value.toUpperCase().replace(/=+$/g, "");
+    let bits = "";
+
+    for (const character of normalized) {
+      const index = alphabet.indexOf(character);
+      assert.notEqual(index, -1, "invalid base32 TOTP secret");
+      bits += index.toString(2).padStart(5, "0");
+    }
+
+    const bytes = [];
+    for (let offset = 0; offset + 8 <= bits.length; offset += 8) {
+      bytes.push(Number.parseInt(bits.slice(offset, offset + 8), 2));
+    }
+    return Buffer.from(bytes);
+  }
+
+  function totpCode(secret, timestamp = Date.now()) {
+    const counter = BigInt(Math.floor(timestamp / 30_000));
+    const buffer = Buffer.alloc(8);
+    buffer.writeBigUInt64BE(counter);
+    const digest = createHmac("sha1", decodeBase32(secret))
+      .update(buffer)
+      .digest();
+    const offset = digest[digest.length - 1] & 0x0f;
+    const binary =
+      ((digest[offset] & 0x7f) << 24) |
+      ((digest[offset + 1] & 0xff) << 16) |
+      ((digest[offset + 2] & 0xff) << 8) |
+      (digest[offset + 3] & 0xff);
+    return String(binary % 1_000_000).padStart(6, "0");
+  }
 
   function applyCookies(jar, cookiesToSet) {
     for (const { name, value, options = {} } of cookiesToSet) {
@@ -96,6 +131,43 @@ if (!runRealTests) {
     assert.ifError(error);
     assert.ok(data.user);
     return { client, jar, user: data.user, session: data.session };
+  }
+
+  async function enrollTotp(sessionState) {
+    const { data: enrollment, error: enrollmentError } =
+      await sessionState.client.auth.mfa.enroll({ factorType: "totp" });
+    assert.ifError(enrollmentError);
+    assert.ok(enrollment.totp.secret);
+
+    const { data: challenge, error: challengeError } =
+      await sessionState.client.auth.mfa.challenge({ factorId: enrollment.id });
+    assert.ifError(challengeError);
+
+    const { error: verifyError } = await sessionState.client.auth.mfa.verify({
+      factorId: enrollment.id,
+      challengeId: challenge.id,
+      code: totpCode(enrollment.totp.secret),
+    });
+    assert.ifError(verifyError);
+
+    const { data: assurance, error: assuranceError } =
+      await sessionState.client.auth.mfa.getAuthenticatorAssuranceLevel();
+    assert.ifError(assuranceError);
+    assert.equal(assurance.currentLevel, "aal2");
+    assert.equal(assurance.nextLevel, "aal2");
+
+    return { id: enrollment.id, secret: enrollment.totp.secret };
+  }
+
+  async function challengeTotp(sessionState, enrolledFactor, code) {
+    const { data: challenge, error: challengeError } =
+      await sessionState.client.auth.mfa.challenge({ factorId: enrolledFactor.id });
+    assert.ifError(challengeError);
+    return sessionState.client.auth.mfa.verify({
+      factorId: enrolledFactor.id,
+      challengeId: challenge.id,
+      code: code || totpCode(enrolledFactor.secret),
+    });
   }
 
   async function appRequest(path, options = {}, jar = new Map()) {
@@ -187,9 +259,16 @@ if (!runRealTests) {
     await createAuthIdentity("nonadmin");
 
     sessions.super = await signIn(identities.super.email);
+    factors.super = await enrollTotp(sessions.super);
+    sessions.superAal1 = await signIn(identities.super.email);
+    sessions.superChallenge = await signIn(identities.super.email);
     sessions.allowed = await signIn(identities.allowed.email);
+    factors.allowed = await enrollTotp(sessions.allowed);
+    sessions.allowedAal1 = await signIn(identities.allowed.email);
     sessions.denied = await signIn(identities.denied.email);
+    factors.denied = await enrollTotp(sessions.denied);
     sessions.disabled = await signIn(identities.disabled.email);
+    factors.disabled = await enrollTotp(sessions.disabled);
     sessions.nonadmin = await signIn(identities.nonadmin.email);
   });
 
@@ -214,10 +293,105 @@ if (!runRealTests) {
     }
   });
 
-  describe("A-1/A-3 real authorization matrix", { concurrency: false }, () => {
+  describe("A-1/A-2/A-3 real authorization matrix", { concurrency: false }, () => {
     test("1. super_admin authenticates with Supabase Auth", () => {
       assert.ok(sessions.super.session?.access_token);
       assert.ok(sessions.super.session?.expires_at > Math.floor(Date.now() / 1000));
+    });
+
+    test("A-2: TOTP enrollment promoted the disposable session to aal2", async () => {
+      assert.ok(factors.super.id);
+      const assurance =
+        await sessions.super.client.auth.mfa.getAuthenticatorAssuranceLevel();
+      assert.ifError(assurance.error);
+      assert.equal(assurance.data.currentLevel, "aal2");
+      assert.equal(assurance.data.nextLevel, "aal2");
+    });
+
+    test("A-2: an existing aal2 session skips the MFA gate", async () => {
+      const response = await appRequest("/admin/mfa", {}, sessions.super.jar);
+      assert.equal(response.status, 307);
+      assert.match(response.headers.get("location") || "", /\/admin$/);
+    });
+
+    test("A-2: password-only super_admin remains blocked at aal1", async () => {
+      const assurance =
+        await sessions.superAal1.client.auth.mfa.getAuthenticatorAssuranceLevel();
+      assert.ifError(assurance.error);
+      assert.equal(assurance.data.currentLevel, "aal1");
+      assert.equal(assurance.data.nextLevel, "aal2");
+
+      const [admin, settings] = await Promise.all([
+        appRequest("/admin", {}, sessions.superAal1.jar),
+        appRequest("/admin/settings", {}, sessions.superAal1.jar),
+      ]);
+      assert.equal(admin.status, 307);
+      assert.equal(settings.status, 307);
+    });
+
+    test("A-2: authorized aal1 admin can open only the MFA gate", async () => {
+      const response = await appRequest("/admin/mfa", {}, sessions.allowedAal1.jar);
+      assert.equal(response.status, 200);
+    });
+
+    test("A-2: users without tenant authorization cannot start MFA", async () => {
+      const [nonadmin, denied] = await Promise.all([
+        appRequest("/admin/mfa", {}, sessions.nonadmin.jar),
+        appRequest("/admin/mfa", {}, sessions.denied.jar),
+      ]);
+      assert.equal(nonadmin.status, 307);
+      assert.equal(denied.status, 307);
+    });
+
+    test("A-2: all administrative APIs reject aal1 before business work", async () => {
+      const checks = [
+        ["/api/admin/settings", { method: "POST" }, 401],
+        ["/api/admin/upload", { method: "POST" }, 401],
+        ["/api/push/send", { method: "POST" }, 401],
+      ];
+
+      for (const [path, options, status] of checks) {
+        const response = await appRequest(path, options, sessions.superAal1.jar);
+        assert.equal(response.status, status, path);
+      }
+    });
+
+    test("A-2: a correct TOTP challenge promotes aal1 to aal2", async () => {
+      const { error } = await challengeTotp(
+        sessions.superChallenge,
+        factors.super,
+      );
+      assert.ifError(error);
+      const assurance =
+        await sessions.superChallenge.client.auth.mfa.getAuthenticatorAssuranceLevel();
+      assert.ifError(assurance.error);
+      assert.equal(assurance.data.currentLevel, "aal2");
+      const response = await appRequest(
+        "/admin",
+        {},
+        sessions.superChallenge.jar,
+      );
+      assert.equal(response.status, 200);
+    });
+
+    test("A-2: an incorrect TOTP code leaves the session blocked", async () => {
+      const validCode = totpCode(factors.allowed.secret);
+      const invalidCode = String((Number(validCode) + 1) % 1_000_000).padStart(
+        6,
+        "0",
+      );
+      const { error } = await challengeTotp(
+        sessions.allowedAal1,
+        factors.allowed,
+        invalidCode,
+      );
+      assert.ok(error);
+      const assurance =
+        await sessions.allowedAal1.client.auth.mfa.getAuthenticatorAssuranceLevel();
+      assert.ifError(assurance.error);
+      assert.equal(assurance.data.currentLevel, "aal1");
+      const response = await appRequest("/admin", {}, sessions.allowedAal1.jar);
+      assert.equal(response.status, 307);
     });
 
     test("2. super_admin accesses the tenant admin pages", async () => {
@@ -410,8 +584,12 @@ if (!runRealTests) {
         { ban_duration: "876000h" },
       );
       assert.ifError(error);
-      const response = await appRequest("/admin", {}, sessions.disabled.jar);
-      assert.equal(response.status, 307);
+      const [adminPage, mfaPage] = await Promise.all([
+        appRequest("/admin", {}, sessions.disabled.jar),
+        appRequest("/admin/mfa", {}, sessions.disabled.jar),
+      ]);
+      assert.equal(adminPage.status, 307);
+      assert.equal(mfaPage.status, 307);
     });
 
     test("13. ADMIN_EMAIL and ADMIN_PASSWORD cannot grant access", () => {
@@ -453,6 +631,11 @@ if (!runRealTests) {
 
     test("logout clears local cookies and revokes the refresh session", async () => {
       const logoutSession = await signIn(identities.super.email);
+      const { error: challengeError } = await challengeTotp(
+        logoutSession,
+        factors.super,
+      );
+      assert.ifError(challengeError);
       const oldJar = new Map(logoutSession.jar);
       const response = await appRequest(
         "/api/admin/logout",

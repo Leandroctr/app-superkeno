@@ -99,37 +99,93 @@ async function hasTenantAccess(admin: CurrentAdmin, tenantDomain: string) {
   return Boolean(data);
 }
 
-export async function getAuthorizedAdminForTenant(
-  authUserId: string,
-  tenantDomain: string,
-): Promise<CurrentAdmin | null> {
-  const admin = await findActiveAdminByAuthUserId(authUserId);
+const getAuthenticatedAdmin = cache(
+  async function getAuthenticatedAdmin(): Promise<CurrentAdmin | null> {
+    const sessionClient = await createSupabaseSessionClient();
 
-  if (!admin || !(await hasTenantAccess(admin, tenantDomain))) {
-    return null;
-  }
+    if (!sessionClient) {
+      logServerWarn("admin_identity_skip", {
+        reason: "supabase_session_not_configured",
+      });
+      return null;
+    }
 
-  return admin;
+    // getUser() contacts Supabase Auth on every guard evaluation. A cookie or
+    // getSession() payload alone is never trusted as administrative identity.
+    const { data: userData, error: userError } =
+      await sessionClient.auth.getUser();
+
+    if (userError || !userData.user) {
+      return null;
+    }
+
+    return findActiveAdminByAuthUserId(userData.user.id);
+  },
+);
+
+type AdminMfaAssurance = {
+  currentLevel?: string | null;
+  nextLevel?: string | null;
+  currentAuthenticationMethods?: Array<
+    string | { method?: string | null }
+  > | null;
+};
+
+export function isAdminMfaAssuranceSatisfied(
+  assurance: AdminMfaAssurance | null | undefined,
+): boolean {
+  return Boolean(
+    assurance?.currentLevel === "aal2" &&
+      assurance.nextLevel === "aal2" &&
+      assurance.currentAuthenticationMethods?.some(
+        (entry) =>
+          entry === "totp" ||
+          (typeof entry === "object" && entry?.method === "totp"),
+      ),
+  );
 }
 
-export const getCurrentAdmin = cache(async function getCurrentAdmin(): Promise<CurrentAdmin | null> {
+export async function hasRequiredAdminMfa(): Promise<boolean> {
   const sessionClient = await createSupabaseSessionClient();
 
   if (!sessionClient) {
-    logServerWarn("admin_identity_skip", { reason: "supabase_session_not_configured" });
-    return null;
+    return false;
   }
 
-  // getUser() contacts Supabase Auth on every guard evaluation. A cookie or
-  // getSession() payload alone is never trusted as administrative identity.
-  const { data: userData, error: userError } = await sessionClient.auth.getUser();
+  try {
+    const { data, error } =
+      await sessionClient.auth.mfa.getAuthenticatorAssuranceLevel();
 
-  if (userError || !userData.user) {
-    return null;
+    return !error && isAdminMfaAssuranceSatisfied(data);
+  } catch {
+    return false;
   }
+}
 
-  return findActiveAdminByAuthUserId(userData.user.id);
-});
+export const getAdminPendingMfaForTenant = cache(
+  async function getAdminPendingMfaForTenant(): Promise<CurrentAdmin | null> {
+    const admin = await getAuthenticatedAdmin();
+
+    if (!admin) {
+      return null;
+    }
+
+    const tenantDomain = extractHostname(appConfig.publicUrl);
+    return (await hasTenantAccess(admin, tenantDomain)) ? admin : null;
+  },
+);
+
+export const getCurrentAdmin = cache(
+  async function getCurrentAdmin(): Promise<CurrentAdmin | null> {
+    const admin = await getAuthenticatedAdmin();
+
+    if (!admin || !(await hasRequiredAdminMfa())) {
+      return null;
+    }
+
+    return admin;
+  },
+);
 
 export async function requireSuperAdmin(): Promise<CurrentAdmin | null> {
   const admin = await getCurrentAdmin();
