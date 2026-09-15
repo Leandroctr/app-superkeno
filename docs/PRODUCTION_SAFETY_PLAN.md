@@ -233,3 +233,14 @@ existente. Ele não cria tenants, não restaura usuários/dados e não recria
 Qualquer prova dinâmica deve ocorrer primeiro em um Supabase local ou staging
 descartável, nunca em produção.
 
+### M-7 nos repositorios consumidores
+
+A migration canonica `20260915153506_admin_audit_logs.sql` vive somente no
+app-big e ja foi aplicada uma vez ao PWA-WL. Nao a copiar, criar migration
+concorrente ou executar SQL por este repositorio.
+
+O bloco `admin_audit_logs` em `supabase/schema.sql` representa o baseline
+final apenas para um projeto Supabase novo e vazio. Ele nao autoriza executar o
+baseline no PWA-WL existente. Mudancas desta branch limitam-se ao codigo
+server-side, testes e documentacao; push, deploy e qualquer escrita real
+continuam sujeitos a aprovacao separada.

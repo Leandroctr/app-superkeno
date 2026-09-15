@@ -649,3 +649,15 @@ O primeiro lote estará concluído quando todos os critérios abaixo forem verif
 - [ ] Painel admin continua funcionando
 - [ ] Push continua funcionando para subscriptions existentes
 - [ ] Documentação relacionada atualizada junto com cada alteração implementada
+---
+
+## Evolucao M-7 posterior ao lote original
+
+Em 2026-09-15, este PWA recebeu o nucleo comum da trilha administrativa
+persistente validada no BigPix: settings, upload e push usam
+attempt/result append-only com correlation id. A arquitetura e a regra de
+aplicacao unica estao em `docs/ADMIN_AUDIT_TRAIL.md`.
+
+A migration canonica permanece somente no app-big e ja foi aplicada ao
+Supabase compartilhado. Esta propagacao nao executa SQL, nao cria UI e nao
+inclui as superficies de gestao de administradores exclusivas do BigPix.

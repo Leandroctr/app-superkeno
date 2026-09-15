@@ -1323,3 +1323,35 @@ operacional foi manter a prova automatizada validada no repositório de
 referência. Rollback: reverter o commit local desta etapa; uma publicação futura
 de rollback deve avançar a versão do cache, sem republicar o worker
 `app-big-v1`.
+---
+
+## 21. M-7 — nucleo comum da trilha administrativa — 2026-09-15
+
+Este PWA recebeu, em worktree limpo criado de `origin/main`, o nucleo comum
+validado no BigPix para `public.admin_audit_logs`. Settings, upload e push
+agora exigem um `attempt` persistido antes da mutacao e inserem resultado
+`success`, `failure` ou `partial` com o mesmo `correlation_id`. Falha no
+attempt bloqueia a operacao; falha terminal nao desfaz operacao externa nem
+remove a evidencia inicial.
+
+`lib/admin-audit.server.ts` deriva ator e tenant de origem exclusivamente do
+contexto server-side validado e insere somente pelo client service role. As
+allowlists por entidade e o limite de 16 KiB impedem copiar objetos completos;
+credenciais, tokens, TOTP, payloads, recipients, arquivos e respostas integrais
+de provedores nao entram na tabela.
+
+A baseline representa a tabela, cinco indices, RLS, zero policies, revokes para
+roles publicas e apenas `SELECT`/`INSERT` para `service_role`. A migration
+canonica e o rollback continuam somente no app-big. Como a migration ja foi
+aplicada uma vez ao PWA-WL, esta etapa nao criou migration, nao executou SQL,
+nao alterou Supabase e nao repetiu teste funcional real.
+
+As rotas e acoes de gestao de administradores permanecem exclusivas do BigPix.
+Login, logout, MFA e password reset permanecem fora do M-7. Nenhuma UI de
+auditoria foi criada.
+
+A validacao local passou com npm ci, typecheck, build, lint sem erros (somente
+o warning preexistente de `formatDimension`), M-7 13/13, CETEC 8/8, auth/MFA
+16/16, upload 22/22, push 8/8 + 7/7, PWA 15/15, schema 8/8, CI policy 15/15 e
+git diff check. O npm audit encontrou zero vulnerabilidades, incluindo zero
+HIGH e zero CRITICAL.

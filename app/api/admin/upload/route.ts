@@ -2,6 +2,14 @@ import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import { logServerError } from "@/lib/logger/server";
+import { sanitizeAssetAuditMetadata } from "@/lib/admin-audit";
+import { appConfig } from "@/lib/app-config";
+import { extractHostname } from "@/lib/app-settings";
+import {
+  AdminAuditUnavailableError,
+  beginAdminAudit,
+  completeAdminAudit,
+} from "@/lib/admin-audit.server";
 import {
   MultipartUploadError,
   parseMultipartUpload,
@@ -93,23 +101,74 @@ export async function POST(request: Request) {
     const uploadData = new Blob([Uint8Array.from(prepared.buffer)], {
       type: prepared.contentType,
     });
+    const auditMetadata = sanitizeAssetAuditMetadata({
+      assetType: kind,
+      mimeType: prepared.contentType,
+      sizeBytes: prepared.buffer.length,
+    });
+    let auditContext;
 
-    const { error } = await supabase.storage
-      .from(bucketName)
-      .upload(path, uploadData, {
-        cacheControl: "31536000",
-        contentType: prepared.contentType,
-        upsert: false,
+    try {
+      auditContext = await beginAdminAudit({
+        actor: currentAdmin,
+        action: "asset.uploaded",
+        entityType: "asset",
+        entityId: path,
+        targetTenantDomain: extractHostname(appConfig.publicUrl),
+        metadataJson: auditMetadata,
       });
+    } catch (error) {
+      if (error instanceof AdminAuditUnavailableError) {
+        return NextResponse.json(
+          { ok: false, error: "Auditoria administrativa indisponivel." },
+          { status: 503 },
+        );
+      }
+      throw error;
+    }
 
-    if (error) {
-      logServerError("admin_upload_error", error, { step: "storage_upload" });
+    let storageError;
+    try {
+      const result = await supabase.storage
+        .from(bucketName)
+        .upload(path, uploadData, {
+          cacheControl: "31536000",
+          contentType: prepared.contentType,
+          upsert: false,
+        });
+      storageError = result.error;
+    } catch (error) {
+      await completeAdminAudit(auditContext, {
+        outcome: "failure",
+        metadataJson: auditMetadata,
+      });
+      logServerError("admin_upload_error", error, {
+        step: "storage_upload",
+      });
       return NextResponse.json(
         { ok: false, error: "Nao foi possivel enviar o arquivo." },
         { status: 500 },
       );
     }
 
+    if (storageError) {
+      await completeAdminAudit(auditContext, {
+        outcome: "failure",
+        metadataJson: auditMetadata,
+      });
+      logServerError("admin_upload_error", storageError, {
+        step: "storage_upload",
+      });
+      return NextResponse.json(
+        { ok: false, error: "Nao foi possivel enviar o arquivo." },
+        { status: 500 },
+      );
+    }
+
+    await completeAdminAudit(auditContext, {
+      outcome: "success",
+      metadataJson: auditMetadata,
+    });
     const { data } = supabase.storage.from(bucketName).getPublicUrl(path);
 
     return NextResponse.json({

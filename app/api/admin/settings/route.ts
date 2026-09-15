@@ -4,6 +4,16 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { appConfig } from "@/lib/app-config";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
 import {
+  getSettingsAuditChangedFields,
+  sanitizeSettingsAuditMetadata,
+  sanitizeSettingsAuditSnapshot,
+} from "@/lib/admin-audit";
+import {
+  AdminAuditUnavailableError,
+  beginAdminAudit,
+  completeAdminAudit,
+} from "@/lib/admin-audit.server";
+import {
   resolveLegacySplashHtmlUrl,
   resolveTenantSettings,
   type SettingsPayload,
@@ -59,7 +69,7 @@ export async function POST(request: Request) {
 
   const { data: currentRow, error: currentRowError } = await supabase
     .from("app_settings")
-    .select("splash_html_url")
+    .select("*")
     .eq("tenant_domain", hostname)
     .maybeSingle();
 
@@ -92,6 +102,34 @@ export async function POST(request: Request) {
     { ...payload, splashHtmlUrl },
     hostname,
   );
+  const beforeSettings = settingsRowToAppSettings(currentRow);
+  const changedFields = getSettingsAuditChangedFields(
+    beforeSettings,
+    settings,
+  );
+  const auditMetadata = sanitizeSettingsAuditMetadata(changedFields);
+  let auditContext;
+
+  try {
+    auditContext = await beginAdminAudit({
+      actor: currentAdmin,
+      action: "settings.updated",
+      entityType: "settings",
+      entityId: currentRow?.id ?? hostname,
+      targetTenantDomain: hostname,
+      beforeJson: sanitizeSettingsAuditSnapshot(beforeSettings),
+      metadataJson: auditMetadata,
+    });
+  } catch (error) {
+    if (error instanceof AdminAuditUnavailableError) {
+      return NextResponse.json(
+        { ok: false, error: "Auditoria administrativa indisponivel." },
+        { status: 503 },
+      );
+    }
+    throw error;
+  }
+
   const row = appSettingsToRow(settings);
   const query = settings.id
     ? supabase.from("app_settings").update(row).eq("tenant_domain", hostname)
@@ -102,14 +140,26 @@ export async function POST(request: Request) {
   const { data, error } = await query.select("*").single();
 
   if (error || !data) {
+    await completeAdminAudit(auditContext, {
+      outcome: "failure",
+      metadataJson: auditMetadata,
+    });
     return NextResponse.json(
       { ok: false, error: "Nao foi possivel salvar as configuracoes." },
       { status: 500 },
     );
   }
 
+  const finalSettings = settingsRowToAppSettings(data);
+  await completeAdminAudit(auditContext, {
+    outcome: "success",
+    entityId: data.id ?? auditContext.entityId,
+    afterJson: sanitizeSettingsAuditSnapshot(finalSettings),
+    metadataJson: auditMetadata,
+  });
+
   return NextResponse.json({
     ok: true,
-    settings: settingsRowToAppSettings(data),
+    settings: finalSettings,
   });
 }

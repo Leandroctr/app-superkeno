@@ -3,6 +3,12 @@ import type { AppSettings } from "@/lib/app-settings";
 import { getAppSettings } from "@/lib/app-settings.server";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { requireTenantAccess } from "@/lib/admin-identity.server";
+import { sanitizePushAuditMetadata } from "@/lib/admin-audit";
+import {
+  AdminAuditUnavailableError,
+  beginAdminAudit,
+  completeAdminAudit,
+} from "@/lib/admin-audit.server";
 import { logServerInfo, logServerWarn, logServerError } from "@/lib/logger/server";
 import { formatOneSignalError, resolvePushTargetUrl } from "@/lib/push-security";
 
@@ -104,6 +110,31 @@ export async function POST(request: Request) {
     );
   }
 
+  const attemptMetadata = sanitizePushAuditMetadata({
+    targetType: data.targetType,
+    recipientCount: targetCount,
+    campaignPersisted: false,
+  });
+  let auditContext;
+
+  try {
+    auditContext = await beginAdminAudit({
+      actor: currentAdmin,
+      action: "push.sent",
+      entityType: "push_campaign",
+      targetTenantDomain: settings.tenantDomain,
+      metadataJson: attemptMetadata,
+    });
+  } catch (error) {
+    if (error instanceof AdminAuditUnavailableError) {
+      return NextResponse.json(
+        { ok: false, error: "Auditoria administrativa indisponivel." },
+        { status: 503 },
+      );
+    }
+    throw error;
+  }
+
   const { data: campaign, error: createCampaignError } = await supabase
     .from("push_campaigns")
     .insert({
@@ -120,6 +151,11 @@ export async function POST(request: Request) {
     .single();
 
   if (createCampaignError || !campaign) {
+    await completeAdminAudit(auditContext, {
+      action: "push.failed",
+      outcome: "failure",
+      metadataJson: attemptMetadata,
+    });
     logServerError("push_send_error", createCampaignError, {
       step: "create_campaign",
       targetType: data.targetType,
@@ -139,21 +175,61 @@ export async function POST(request: Request) {
     campaignId: campaign.id,
   });
 
-  const oneSignalResponse = await fetch("https://api.onesignal.com/notifications", {
-    method: "POST",
-    headers: {
-      Authorization: `Key ${oneSignalRestApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      app_id: settings.oneSignalAppId,
-      target_channel: "push",
-      include_subscription_ids: subscriptionIds,
-      headings: { en: data.title, pt: data.title },
-      contents: { en: data.message, pt: data.message },
-      url: data.targetUrl,
-    }),
-  });
+  let oneSignalResponse: Response;
+  try {
+    oneSignalResponse = await fetch("https://api.onesignal.com/notifications", {
+      method: "POST",
+      headers: {
+        Authorization: "Key " + oneSignalRestApiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        app_id: settings.oneSignalAppId,
+        target_channel: "push",
+        include_subscription_ids: subscriptionIds,
+        headings: { en: data.title, pt: data.title },
+        contents: { en: data.message, pt: data.message },
+        url: data.targetUrl,
+      }),
+    });
+  } catch (error) {
+    const { error: campaignError } = await supabase
+      .from("push_campaigns")
+      .update({
+        status: "failed",
+        error_message: "Falha de transporte ao contatar o provedor.",
+      })
+      .eq("id", campaign.id);
+    const outcome = campaignError ? "partial" : "failure";
+
+    await completeAdminAudit(auditContext, {
+      action: campaignError ? "push.partial" : "push.failed",
+      outcome,
+      entityId: campaign.id,
+      metadataJson: sanitizePushAuditMetadata({
+        targetType: data.targetType,
+        recipientCount: targetCount,
+        notificationAccepted: false,
+        campaignPersisted: !campaignError,
+      }),
+    });
+    logServerError("push_send_error", error, {
+      step: "onesignal_transport",
+      targetType: data.targetType,
+      recipientCount: targetCount,
+      maskedAppId,
+      campaignId: campaign.id,
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Nao foi possivel contatar o OneSignal.",
+        targetCount,
+        campaignId: campaign.id,
+      },
+      { status: 502 },
+    );
+  }
 
   let oneSignalResult: Record<string, unknown> = {};
   try {
@@ -194,6 +270,18 @@ export async function POST(request: Request) {
     .eq("id", campaign.id);
 
   if (!oneSignalResponse.ok) {
+    await completeAdminAudit(auditContext, {
+      action: campaignError ? "push.partial" : "push.failed",
+      outcome: campaignError ? "partial" : "failure",
+      entityId: campaign.id,
+      metadataJson: sanitizePushAuditMetadata({
+        targetType: data.targetType,
+        recipientCount: targetCount,
+        httpStatus: oneSignalResponse.status,
+        notificationAccepted: false,
+        campaignPersisted: !campaignError,
+      }),
+    });
     return NextResponse.json(
       {
         ok: false,
@@ -206,11 +294,36 @@ export async function POST(request: Request) {
   }
 
   if (campaignError) {
+    await completeAdminAudit(auditContext, {
+      action: "push.partial",
+      outcome: "partial",
+      entityId: campaign.id,
+      metadataJson: sanitizePushAuditMetadata({
+        targetType: data.targetType,
+        recipientCount: targetCount,
+        httpStatus: oneSignalResponse.status,
+        notificationAccepted: true,
+        campaignPersisted: false,
+      }),
+    });
     return NextResponse.json(
       { ok: false, error: "Push enviado, mas campanha nao foi registrada." },
       { status: 500 },
     );
   }
+
+  await completeAdminAudit(auditContext, {
+    action: "push.sent",
+    outcome: "success",
+    entityId: campaign.id,
+    metadataJson: sanitizePushAuditMetadata({
+      targetType: data.targetType,
+      recipientCount: targetCount,
+      httpStatus: oneSignalResponse.status,
+      notificationAccepted: true,
+      campaignPersisted: true,
+    }),
+  });
 
   return NextResponse.json({
     ok: true,

@@ -15,6 +15,7 @@
     "test:push-hardening": "node --experimental-strip-types --test tests/push-hardening.test.mjs",
     "test:pwa": "node --test tests/service-worker.test.mjs",
     "test:schema-baseline": "node --test tests/schema-baseline.test.mjs",
+    "test:admin-audit": "node --experimental-strip-types --test tests/admin-audit.test.mjs",
     "test:push-subscriptions": "node --experimental-strip-types --test tests/push-subscriptions.test.mjs",
     "test:ci-security": "node --test tests/ci-security-policy.test.mjs",
     "test:push-subscriptions:real": "node --test tests/push-subscriptions.integration.mjs"

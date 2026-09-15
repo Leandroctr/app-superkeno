@@ -415,3 +415,21 @@ payload e destinatários nunca são copiados para `error_message`. Em sucesso,
 
 M-7/`admin_audit_log` continua fora deste lote e não é declarado resolvido.
 
+---
+
+## 9. M-7 comum propagado — 2026-09-15
+
+O contrato anterior da secao 2 era uma proposta historica. O contrato efetivo
+agora e `public.admin_audit_logs`, detalhado em
+`docs/ADMIN_AUDIT_TRAIL.md`: todo `attempt` e persistido antes da mutacao e
+o resultado e outro insert com o mesmo `correlation_id`.
+
+Neste PWA, settings, upload e push estao instrumentados. As mutacoes de gestao
+de administradores continuam exclusivas do BigPix. O evento operacional
+`admin_audit_write_error` registra somente fase, action, outcome quando
+aplicavel, correlation id e identificadores sanitizados do erro; nunca registra
+payload, mensagem bruta, stack, senha, token, cookie, TOTP, key, arquivo,
+recipient ou resposta integral de provedor.
+
+A migration canonica ja foi aplicada uma vez pelo app-big ao PWA-WL e nao
+existe neste repositorio. Esta propagacao nao executa SQL nem altera Supabase.

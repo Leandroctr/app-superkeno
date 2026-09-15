@@ -71,6 +71,9 @@ jobs:
       - name: Schema baseline
         run: npm run test:schema-baseline
 
+      - name: Administrative audit trail
+        run: npm run test:admin-audit
+
       - name: CI security policy
         run: npm run test:ci-security
 

@@ -115,6 +115,49 @@ create table if not exists public.admin_tenant_access (
 create index if not exists admin_tenant_access_admin_user_idx
   on public.admin_tenant_access (admin_user_id);
 
+-- Shared, append-only administrative mutation audit trail. The canonical
+-- migration lives only in app-big and must be applied once to PWA-WL.
+create table if not exists public.admin_audit_logs (
+  id bigint generated always as identity primary key,
+  correlation_id uuid not null,
+  occurred_at timestamptz not null default now(),
+  source_tenant_domain text not null,
+  target_tenant_domain text null,
+  actor_admin_user_id uuid null
+    references public.admin_users(id)
+    on delete set null,
+  actor_auth_user_id uuid null,
+  actor_email_snapshot text not null,
+  actor_role_snapshot text not null,
+  action text not null,
+  entity_type text not null,
+  entity_id text null,
+  outcome text not null
+    constraint admin_audit_logs_outcome_check
+    check (outcome in ('attempt', 'success', 'failure', 'partial')),
+  before_json jsonb not null default '{}'::jsonb,
+  after_json jsonb not null default '{}'::jsonb,
+  metadata_json jsonb not null default '{}'::jsonb,
+  source_commit_sha text null,
+  source_deployment_id text null
+);
+
+create index if not exists admin_audit_logs_source_tenant_occurred_idx
+  on public.admin_audit_logs (source_tenant_domain, occurred_at desc);
+
+create index if not exists admin_audit_logs_target_tenant_occurred_idx
+  on public.admin_audit_logs (target_tenant_domain, occurred_at desc)
+  where target_tenant_domain is not null;
+
+create index if not exists admin_audit_logs_actor_occurred_idx
+  on public.admin_audit_logs (actor_admin_user_id, occurred_at desc);
+
+create index if not exists admin_audit_logs_entity_occurred_idx
+  on public.admin_audit_logs (entity_type, entity_id, occurred_at desc);
+
+create index if not exists admin_audit_logs_correlation_idx
+  on public.admin_audit_logs (correlation_id);
+
 -- Client roles never access application tables directly. All application
 -- reads and writes go through server-side routes using service_role.
 alter table public.app_settings enable row level security;
@@ -122,6 +165,7 @@ alter table public.push_subscriptions enable row level security;
 alter table public.push_campaigns enable row level security;
 alter table public.admin_users enable row level security;
 alter table public.admin_tenant_access enable row level security;
+alter table public.admin_audit_logs enable row level security;
 
 drop policy if exists "Allow public read app_settings" on public.app_settings;
 drop policy if exists "Allow anonymous push subscription registration"
@@ -134,12 +178,19 @@ revoke all on table public.push_subscriptions from public, anon, authenticated;
 revoke all on table public.push_campaigns from public, anon, authenticated;
 revoke all on table public.admin_users from public, anon, authenticated;
 revoke all on table public.admin_tenant_access from public, anon, authenticated;
+revoke all on table public.admin_audit_logs
+  from public, anon, authenticated, service_role;
 
 grant select, insert, update, delete on table public.app_settings to service_role;
 grant select, insert, update, delete on table public.push_subscriptions to service_role;
 grant select, insert, update, delete on table public.push_campaigns to service_role;
 grant select, insert, update, delete on table public.admin_users to service_role;
 grant select, insert, update, delete on table public.admin_tenant_access to service_role;
+grant select, insert on table public.admin_audit_logs to service_role;
+
+revoke all on sequence public.admin_audit_logs_id_seq
+  from public, anon, authenticated, service_role;
+grant usage, select on sequence public.admin_audit_logs_id_seq to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Distributed rate limiting (migration 005 final state)

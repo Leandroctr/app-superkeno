@@ -65,6 +65,7 @@ test("workflow runs the locked static validation matrix", () => {
     "npm run test:push-hardening",
     "npm run test:pwa",
     "npm run test:schema-baseline",
+    "npm run test:admin-audit",
     "npm run test:ci-security",
   ]) {
     assert.match(workflow, new RegExp(command.replaceAll(":", "\\:")));
