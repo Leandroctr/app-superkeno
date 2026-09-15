@@ -1287,3 +1287,39 @@ exclusivas do BigPix. A suíte real continua opt-in e usa apenas identidades
 descartáveis com teardown explícito; a propagação não repete enrollment com
 contas reais. Esta etapa não altera schema, RLS, grants, Supabase, Vercel,
 OneSignal, Service Worker ou variáveis de ambiente.
+
+---
+
+## 20. B-5 — navegação network-first no Service Worker — 2026-09-14
+
+Este PWA recebeu o núcleo comum já implementado e validado no BigPix. A
+propagação foi feita em worktree limpo criado de `origin/main`, permaneceu
+somente em branch local e não alterou Supabase, Vercel, OneSignal, autenticação,
+manifest, branding ou configuração de tenant.
+
+Navegações e documentos públicos agora usam network-first: a resposta de rede
+vence o shell antigo e atualiza apenas o fallback público `/` quando a resposta
+é segura. Em falha de rede, o worker usa a request cacheada e depois `/` como
+fallback offline. Assets de `/_next/static/**` e o manifest preservam a
+estratégia cache-first. `/admin`, `/admin/**`, `/api`, `/api/**`, métodos
+não-GET e requests com `Authorization` não são interceptados.
+
+Respostas não-OK, redirecionadas, `private`, `no-store`, com `Set-Cookie` ou
+`Vary: Cookie/Authorization/*` não são armazenadas. O cache passou de
+`app-big-v1` para `app-big-v2`; no `activate`, somente caches antigos com
+prefixo `app-big-` são removidos, preservando OneSignal e outros namespaces.
+`skipWaiting()`, `clients.claim()`, precache e fallback offline foram
+mantidos.
+
+A validação local passou com `npm ci`, TypeScript, build Next 16.3.4,
+`git diff --check` e lint sem erros (um warning preexistente de
+`formatDimension`). Resultados: PWA/SW 15/15, CETEC P1 8/8, auth estático
+16/16, upload 22/22, push hardening 8/8, push subscriptions 7/7, schema
+baseline 8/8 e política de CI 15/15. `npm audit` retornou zero
+vulnerabilidades.
+
+O teste manual em navegador não foi repetido nesta propagação; a decisão
+operacional foi manter a prova automatizada validada no repositório de
+referência. Rollback: reverter o commit local desta etapa; uma publicação futura
+de rollback deve avançar a versão do cache, sem republicar o worker
+`app-big-v1`.

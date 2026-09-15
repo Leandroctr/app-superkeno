@@ -65,6 +65,9 @@ jobs:
       - name: Push hardening
         run: npm run test:push-hardening
 
+      - name: PWA service worker
+        run: npm run test:pwa
+
       - name: Schema baseline
         run: npm run test:schema-baseline
 

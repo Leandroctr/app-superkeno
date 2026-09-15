@@ -63,6 +63,7 @@ test("workflow runs the locked static validation matrix", () => {
     "npm run test:push-subscriptions",
     "npm run test:upload",
     "npm run test:push-hardening",
+    "npm run test:pwa",
     "npm run test:schema-baseline",
     "npm run test:ci-security",
   ]) {
